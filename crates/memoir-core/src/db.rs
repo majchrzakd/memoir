@@ -6,17 +6,21 @@ use std::path::Path;
 use rusqlite::Connection;
 use zeroize::Zeroizing;
 
-pub const KEY_LEN: usize = 32;
+use crate::crypto::SecretKey;
+use crate::crypto::keys::KEY_LEN;
 
-/// Opens (or creates) a SQLCipher database keyed with a raw 256-bit key.
+/// Opens (or creates) a SQLCipher database keyed with a raw 256-bit key
+/// (normally `Keyring::local_db`). A raw key skips SQLCipher's own PBKDF2.
 ///
 /// A wrong key fails here (with `SQLITE_NOTADB`) rather than on first use.
-pub fn open_encrypted(path: &Path, key: &[u8; KEY_LEN]) -> rusqlite::Result<Connection> {
+pub fn open_encrypted(path: &Path, key: &SecretKey) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
+    // SQLCipher otherwise prints decryption failures (e.g. a wrong key) to stderr.
+    conn.execute_batch("PRAGMA cipher_log_level = NONE;")?;
 
     let mut pragma = Zeroizing::new(String::with_capacity(20 + KEY_LEN * 2));
     pragma.push_str("PRAGMA key = \"x'");
-    for b in key {
+    for b in key.as_bytes() {
         let _ = write!(pragma, "{b:02x}");
     }
     pragma.push_str("'\";");

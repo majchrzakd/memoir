@@ -9,6 +9,14 @@ is usable locally before sync exists.
 
 ---
 
+## Status
+
+| Milestone | State |
+|---|---|
+| M0 | ✅ done (OAuth spike run pending Google Cloud setup) |
+| M1 | ✅ done |
+| M2–M8 | not started |
+
 ## M0 — Foundations & spikes
 Set up the project and kill the big unknowns before building on them.
 

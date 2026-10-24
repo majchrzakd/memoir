@@ -123,13 +123,17 @@ Master Key ──HKDF──┬─► object_key    (notes, folders)
 - Day-to-day: `local_db_key` is cached in the OS keychain (Windows Credential
   Manager / macOS & iOS Keychain), so the app opens instantly. Optional setting:
   "require passphrase on launch".
+- The master key itself is kept inside the encrypted local database (from M2),
+  so background sync works without the passphrase once the database is open.
+  The keychain therefore holds a single 32-byte secret per vault.
 
 ### Envelope format (every file uploaded to Drive)
 ```
-magic "MMR1" | version | kind | key_id | nonce (24 B) | ciphertext+tag
+magic "MMR1" | version | kind | key epoch | nonce (24 B) | ciphertext+tag
 AAD = header bytes + object id + revision id
-plaintext = zstd(serialized object)
+plaintext = length | zstd(serialized object) | zero padding to 256-byte multiple
 ```
+Byte-level specification: [FORMAT.md](FORMAT.md).
 - XChaCha20-Poly1305 (random 192-bit nonces — safe with no nonce bookkeeping).
 - AAD binds the ciphertext to its identity, so files can't be swapped or
   replayed under another name undetected.
