@@ -1,16 +1,23 @@
-//! Closing the window must not lose unsynced changes: the window is hidden
-//! immediately (so closing feels instant), pending changes are flushed to the
-//! cloud with a time limit, and only then does the process exit.
+//! Closing the window must not lose anything:
+//! 1. the UI is asked to save edits still waiting for autosave (≤ 2 s),
+//! 2. the window is hidden (so closing feels instant),
+//! 3. pending changes are pushed to the cloud (≤ 15 s),
+//! 4. the process exits.
 //!
-//! Anything not flushed in time is still durable in the local outbox and is
+//! Anything not pushed in time is still durable in the local outbox and is
 //! pushed on next launch.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use tauri::{Manager, Runtime, Window};
+use tauri::{Emitter, Manager, Runtime, Window};
 
-const FLUSH_TIMEOUT: Duration = Duration::from_secs(15);
+use crate::commands::AppState;
+
+/// Event the UI answers with the `editor_flushed` command.
+pub const FLUSH_EDITOR_EVENT: &str = "flush-editor";
+const EDITOR_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
+const SYNC_FLUSH_TIMEOUT: Duration = Duration::from_secs(15);
 
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
@@ -19,26 +26,38 @@ pub fn on_close_requested<R: Runtime>(window: &Window<R>) {
     if SHUTTING_DOWN.swap(true, Ordering::SeqCst) {
         return;
     }
-    if let Err(e) = window.hide() {
-        log::warn!("could not hide window on close: {e}");
-    }
-
+    let window = window.clone();
     let app = window.app_handle().clone();
     tauri::async_runtime::spawn(async move {
         let started = Instant::now();
+
+        let state = app.state::<AppState>();
+        match app.emit(FLUSH_EDITOR_EVENT, ()) {
+            Ok(()) => {
+                if tokio::time::timeout(EDITOR_FLUSH_TIMEOUT, state.editor_flushed.notified())
+                    .await
+                    .is_err()
+                {
+                    log::warn!("shutdown: editor did not confirm saving in time");
+                }
+            }
+            Err(e) => log::warn!("shutdown: could not ask the editor to save: {e}"),
+        }
+        if let Err(e) = window.hide() {
+            log::warn!("could not hide window on close: {e}");
+        }
+
         log::info!("shutdown: flushing pending changes");
-        match tokio::time::timeout(FLUSH_TIMEOUT, flush_outbox()).await {
-            Ok(()) => log::info!("shutdown: flush finished in {:?}", started.elapsed()),
+        match tokio::time::timeout(SYNC_FLUSH_TIMEOUT, flush_outbox()).await {
+            Ok(()) => log::info!("shutdown: done in {:?}", started.elapsed()),
             Err(_) => log::warn!(
-                "shutdown: flush timed out after {FLUSH_TIMEOUT:?}; remaining changes stay queued"
+                "shutdown: sync timed out after {SYNC_FLUSH_TIMEOUT:?}; remaining changes stay queued"
             ),
         }
         app.exit(0);
     });
 }
 
-/// Pushes the sync outbox. The sync engine arrives in M6; until then this
-/// simulates network work so the close path can be exercised end to end.
-async fn flush_outbox() {
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-}
+/// Pushes the sync outbox. The sync engine arrives in M6; until then there
+/// is nothing to push.
+async fn flush_outbox() {}

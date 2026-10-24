@@ -16,7 +16,8 @@ is usable locally before sync exists.
 | M0 | ✅ done |
 | M1 | ✅ done |
 | M2 | ✅ done (`revisions` / `remote_state` tables moved to M6, where they're used) |
-| M3–M8 | not started |
+| M3 | ✅ done — tested in the browser against the mock and via unit tests; hands-on check in the desktop app pending |
+| M4–M8 | not started |
 
 ## M0 — Foundations & spikes
 Set up the project and kill the big unknowns before building on them.

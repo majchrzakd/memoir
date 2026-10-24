@@ -2,14 +2,22 @@
   --text: #1f1f23;
   --text-muted: #6b6b76;
   --bg: #ffffff;
-  --bg-sidebar: #f6f6f8;
-  --border: #e4e4e9;
+  --bg-sidebar: #f5f5f7;
+  --bg-raised: #ffffff;
+  --bg-hover: #e9e9ee;
+  --bg-selected: #dfe6fb;
+  --bg-code: #f1f1f4;
+  --border: #e2e2e8;
   --accent: #3a6df0;
+  --accent-text: #ffffff;
+  --danger: #c93636;
+  --mark: #fde68a;
+  --shadow: 0 8px 28px rgb(0 0 0 / 0.14);
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, 'Cascadia Code', Consolas, monospace;
 
-  font: 15px/1.5 var(--sans);
+  font: 14px/1.5 var(--sans);
   color: var(--text);
   background: var(--bg);
   color-scheme: light dark;
@@ -20,10 +28,18 @@
   :root {
     --text: #e6e6ea;
     --text-muted: #9a9aa6;
-    --bg: #1c1c20;
-    --bg-sidebar: #232328;
-    --border: #34343b;
+    --bg: #1b1b1f;
+    --bg-sidebar: #222227;
+    --bg-raised: #2a2a30;
+    --bg-hover: #303037;
+    --bg-selected: #2c3a5e;
+    --bg-code: #2a2a30;
+    --border: #36363e;
     --accent: #7a9cff;
+    --accent-text: #10131c;
+    --danger: #f07070;
+    --mark: #6b5a17;
+    --shadow: 0 8px 28px rgb(0 0 0 / 0.5);
   }
 }
 
@@ -35,4 +51,103 @@
 
 body {
   margin: 0;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+button.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+}
+
+button.icon:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+input[type='text'],
+input[type='password'],
+input[type='search'] {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+input:focus-visible {
+  outline-offset: 0;
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgb(0 0 0 / 0.25);
+}
+
+.dialog {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.error {
+  color: var(--danger);
+}
+
+.muted {
+  color: var(--text-muted);
 }

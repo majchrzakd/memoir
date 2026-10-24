@@ -19,6 +19,15 @@ npm run tauri dev      # run the app
 npm run verify         # everything CI runs: types, lint, tests, fmt, clippy
 ```
 
+To work on the UI alone, `npm run dev` and open <http://localhost:5173> in a
+browser: it runs against an in-memory mock backend with sample notes
+(`?mock=first_run` or `?mock=locked` for the other screens; the locked mock's
+passphrase is `correct horse`).
+
+The app keeps its data in `%LOCALAPPDATA%\com.memoir.notebook` (`vault.json`,
+`memoir.db`); the database key is remembered in Windows Credential Manager
+under `com.memoir.notebook`.
+
 Layout:
 
 | Path | What |

@@ -303,13 +303,39 @@ network loss, then assert: **all devices converge, and no edited text is lost.**
 | HTTP / OAuth | `reqwest` (rustls), `oauth2` |
 | Keychain | `keyring` |
 | Serialization | `serde`, `postcard` (objects), `serde_json` (vault.json) |
-| IPC types | `tauri-specta` → generated TS bindings |
+| IPC types | hand-written TS mirror in `app/src/lib/api/types.ts` (tauri-specta skipped: still pre-1.0, and ~20 commands are easy to keep in sync) |
 | Testing | `proptest`, `insta` |
 | UI | Svelte 5, Vite, TypeScript, TipTap 3 (+ Markdown serializer) |
 
 ---
 
-## 10. M0 spike findings (2026-10-24)
+## 10. Desktop app (M3)
+
+**Files** in the app's local data directory (`%LOCALAPPDATA%\com.memoir.notebook`):
+`vault.json` (public copy; its presence means setup finished), `memoir.db`
+(SQLCipher), `logs/`.
+
+**Session states** (`app/src-tauri/src/session.rs`): first run → (recovery
+key shown, nothing on disk until the user confirms they saved it) →
+unlocked; locked ⇄ unlocked. On launch the database key is read from the OS
+keychain and the app opens unlocked; without it (or with "Remember on this
+device" off) the passphrase — or the recovery key plus a new passphrase — is
+required. A stale keychain entry is discarded.
+
+**UI** (`app/src`): Svelte 5. `lib/app.svelte.ts` holds state and actions;
+`lib/api` is the typed backend. Tree rows are virtualized (only visible rows
+are in the DOM). Each opened note gets a fresh TipTap editor (undo history
+never crosses notes); autosave runs 300 ms after the last keystroke and saves
+are serialized, so an older save can never overwrite a newer one.
+
+**Closing**: the backend emits `flush-editor`; the UI saves pending edits and
+answers with `editor_flushed` (≤ 2 s) before the window hides and sync runs.
+
+**Development without the desktop shell**: `npm run dev` in a normal browser
+uses an in-memory mock backend (`lib/api/mock.ts`, sample notes;
+`?mock=first_run` / `?mock=locked` show the other screens).
+
+## 11. M0 spike findings (2026-10-24)
 
 1. **TipTap ↔ Markdown round-trip** — works, with one fix.
    (`app/src/lib/editor/markdown.test.ts`)

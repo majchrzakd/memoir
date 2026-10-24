@@ -9,3 +9,4 @@ Thumbs.db
 /app/src-tauri/gen/schemas/
 
 google_keys.txt
+/.claude/launch.json

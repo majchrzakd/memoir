@@ -2534,12 +2534,16 @@ name = "memoir-app"
 version = "0.1.0"
 dependencies = [
  "log",
+ "memoir-core",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-log",
+ "tempfile",
+ "thiserror 2.0.21",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
