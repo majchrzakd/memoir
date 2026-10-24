@@ -26,11 +26,21 @@ account whose Drive will hold your notes.
    treats the secret as non-confidential; PKCE protects the flow. Still, keep
    it out of git.)
 
-## 4. Publish (before daily use)
-While the app is in **Testing**, Google expires refresh tokens after 7 days,
-so you'd be signed out weekly. Under **Audience**, click **Publish app**
-("In production"). With only the `drive.file` scope no Google review is
-required.
+## 4. Publish — later, before daily use (M8)
+**Skip this during development.** "Testing" status works fully for your own
+account (listed under **Test users**); the only drawback is that Google
+expires refresh tokens after 7 days, so you have to sign in again weekly.
+
+To publish ("In production"), Google requires the **Branding** page to have
+an app name, support email, **homepage URL** and **privacy policy URL**, and
+the homepage's domain must be an authorized domain you have verified in
+Google Search Console. Plan for M8:
+1. Host a one-page homepage and a privacy policy (`docs/PRIVACY.md`) on
+   GitHub Pages (`<username>.github.io/memoir`).
+2. Verify `<username>.github.io` in Search Console (HTML-file method) and add
+   it under **Branding → Authorized domains**.
+3. Fill in the URLs and click **Publish app**. With only the `drive.file`
+   scope no Google review is required.
 
 ## 5. Run the spike
 ```powershell

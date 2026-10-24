@@ -174,8 +174,8 @@ The DB is **never** placed in a cloud-synced folder.
 ## 6. Sync engine
 
 ### The core problem
-Google Drive API v3 has **no compare-and-swap** (no conditional `If-Match`
-writes). Overwriting a file in place can silently lose an edit made on another
+Google Drive API v3 has **no compare-and-swap**: it ignores `If-Match` on
+updates (verified in the M0 spike). Overwriting a file in place can silently lose an edit made on another
 device at nearly the same time. So:
 
 ### Append-only revision files
@@ -312,14 +312,19 @@ network loss, then assert: **all devices converge, and no edited text is lost.**
      builds are unaffected.
    - On a wrong key SQLCipher logs errors to stderr. Route or silence them
      in M1.
-3. **Google OAuth (PKCE, loopback)** — code ready, run pending.
-   (`crates/memoir-gdrive/examples/oauth_spike.rs`)
-   - Compiles and links, using `reqwest` 0.13 with rustls/aws-lc; no
-     NASM/CMake needed.
-   - Still needs a Google Cloud OAuth client, see
-     [spikes/google-oauth.md](spikes/google-oauth.md). It will also confirm
-     empirically whether Drive v3 ignores `If-Match`, which the
-     append-only revision design assumes.
+3. **Google OAuth (PKCE, loopback) + Drive API** — works.
+   (`crates/memoir-gdrive/examples/oauth_spike.rs`, run 2026-10-24 against a
+   personal Google account in "Testing" status)
+   - System-browser consent → `127.0.0.1` loopback redirect → code exchange
+     with PKCE worked; scope granted is exactly `drive.file`.
+   - Refresh token issued (`access_type=offline`) and minted a new access
+     token.
+   - Created a folder and a file, listed the folder, downloaded the file
+     byte-for-byte. Drive reports `version`, `headRevisionId`, `md5Checksum`.
+   - **`If-Match` is ignored by Drive v3**: an update with a bogus
+     precondition succeeded (HTTP 200). Overwrites are unconditional, which
+     confirms the append-only revision design of §6 is required.
+   - `reqwest` 0.13 with rustls/aws-lc builds with no NASM/CMake.
 4. **Close interception** — works. (`app/src-tauri/src/shutdown.rs`)
    - On WM_CLOSE the window hid at once, a simulated 1.5 s flush ran, and
      the process exited 1.75 s after the close.

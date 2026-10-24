@@ -13,7 +13,7 @@ is usable locally before sync exists.
 
 | Milestone | State |
 |---|---|
-| M0 | ✅ done (OAuth spike run pending Google Cloud setup) |
+| M0 | ✅ done |
 | M1 | ✅ done |
 | M2–M8 | not started |
 
@@ -93,7 +93,8 @@ encrypted on disk.
   Windows Credential Manager, `Memoir/` folder bootstrap, backoff on 429/5xx
 - In-memory fake provider with fault injection (for M6 tests)
 - Settings UI: connect / disconnect Google account
-- Google Cloud project set up with `drive.file` scope, status "In production"
+- Google Cloud project set up with `drive.file` scope (stays in "Testing"
+  until M8)
 
 **Done when:** the app can sign in, create the `Memoir/` folder, upload and
 download encrypted files, and survive token expiry and flaky network.
@@ -133,6 +134,9 @@ notes back as Markdown, without the app.
 - Windows installer (NSIS/MSI via Tauri bundler), code signing
 - Auto-update via Tauri updater (signed update manifests)
 - Crash-safe logging (no note content in logs)
+- Google OAuth app out of "Testing" (which signs you out every 7 days):
+  homepage + privacy policy on GitHub Pages, verified domain, publish — see
+  [spikes/google-oauth.md](spikes/google-oauth.md) step 4
 
 **Done when:** installable, self-updating Windows build used daily for a week
 without data issues.
