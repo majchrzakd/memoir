@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "app/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+# Vendored OpenSSL ships without PDBs; MSVC warns (LNK4099) on every link.
+linker_messages = "allow"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

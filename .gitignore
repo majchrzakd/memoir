@@ -1,0 +1,9 @@
+/target/
+.env
+*.local
+
+# Editors / OS
+.idea/
+.DS_Store
+Thumbs.db
+/app/src-tauri/gen/schemas/

@@ -1,0 +1,17 @@
+[package]
+name = "memoir-core"
+description = "Memoir domain logic: vault, crypto, local store, sync engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rusqlite = { version = "0.41.0", features = ["bundled-sqlcipher-vendored-openssl"] }
+zeroize = "1.9.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"
