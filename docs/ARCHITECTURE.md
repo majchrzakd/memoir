@@ -157,12 +157,40 @@ Single SQLCipher database (WAL mode) — transactional, crash-safe, fast:
 
 | Table | Purpose |
 |---|---|
-| `objects` | current state of folders and notes |
-| `notes_fts` | FTS5 index over title + body + tags |
-| `revisions` | per object: last synced revision id + **base content** (for 3-way merge) |
-| `outbox` | durable queue of objects/blobs pending upload (coalesced per object) |
-| `remote_state` | Drive `changes` page token, folder ids, etc. |
-| `history` | last N local versions of each note (cheap undo beyond the editor) |
+| `meta` | device id, local copy of `vault.json`, master key |
+| `objects` | folders and notes: tree position, title, tags, timestamps (small rows) |
+| `note_bodies` | note Markdown, kept apart so loading the tree doesn't read it |
+| `notes_fts` | FTS5 index over title + plain text of body + tags |
+| `outbox` | objects changed locally and not yet pushed, one row each; a missing object = deletion |
+| `history` | earlier versions of notes (see below) |
+| `revisions` *(M6)* | per object: last synced revision id + **base content** (for 3-way merge) |
+| `remote_state` *(M6)* | Drive `changes` page token, folder ids, etc. |
+
+**Trash**: trashing a folder marks only the folder; everything inside is
+hidden with it and comes back with it. Restoring an item whose folder is gone
+or trashed puts it at the top level. Items whose parent is missing (possible
+after sync) are shown at the top level.
+
+**Note history**: a save keeps the version it replaces when that version sat
+unchanged for 10 minutes (an edit after a pause), or when the newest kept
+version is 10 minutes older (a checkpoint during long continuous editing).
+Autosaves in between are not kept; at most 50 versions per note. Saving
+unchanged content is a no-op, so it never creates sync traffic.
+
+**Order of siblings**: fractional-index sort keys
+(`crates/memoir-core/src/store/sort_key.rs`), so a move or reorder changes a
+single object.
+
+**Measured** (M2, `cargo run -p memoir-core --release --example bench_store`,
+10 000 notes / 23.5 MB Markdown / 110 folders, Windows desktop):
+
+| Operation | median | p99 | target |
+|---|---|---|---|
+| open database + load tree | 15 ms | 20 ms | 300 ms |
+| open note | 0.02 ms | 0.06 ms | 50 ms |
+| save note (fsync) | 1.7 ms | 19 ms | — |
+| search, rare word | 0.1 ms | 0.6 ms | 30 ms |
+| search, word in most notes (top 50) | 18–23 ms | 25 ms | 30 ms |
 
 Every edit: editor → debounce 300 ms → `save_note` command → one transaction
 (update `objects` + FTS + `outbox`). After commit, the change survives a crash.

@@ -122,5 +122,5 @@ HMAC-SHA256(blob-id key, plaintext).
 ## Local database
 
 SQLCipher 4 database keyed with the raw local database key
-(`PRAGMA key = "x'<64 hex>'"`), WAL mode. Its schema is defined in M2. It never
-leaves the device.
+(`PRAGMA key = "x'<64 hex>'"`), WAL mode, `synchronous = FULL`. Schema:
+`crates/memoir-core/src/store/schema.rs`. It never leaves the device.

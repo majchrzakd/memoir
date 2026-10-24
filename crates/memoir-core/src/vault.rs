@@ -134,7 +134,7 @@ pub fn create(passphrase: &str, params: KdfParams) -> Result<NewVault> {
         vault_id,
         key_epoch,
     };
-    let vault = UnlockedVault::new(&file, master);
+    let vault = UnlockedVault::from_master(&file, master);
     Ok(NewVault {
         file,
         vault,
@@ -175,7 +175,7 @@ impl VaultFile {
         let aad = passphrase_aad(&self.vault_id, self.key_epoch, slot.params, &slot.salt);
         let master =
             unwrap_key(&kek, &aad, &slot.wrapped_key).ok_or(VaultError::WrongPassphrase)?;
-        Ok(UnlockedVault::new(self, master))
+        Ok(UnlockedVault::from_master(self, master))
     }
 
     pub fn unlock_with_recovery_key(&self, recovery_key: &RecoveryKey) -> Result<UnlockedVault> {
@@ -186,12 +186,12 @@ impl VaultFile {
             &self.recovery.wrapped_key,
         )
         .ok_or(VaultError::WrongRecoveryKey)?;
-        Ok(UnlockedVault::new(self, master))
+        Ok(UnlockedVault::from_master(self, master))
     }
 }
 
 impl UnlockedVault {
-    fn new(file: &VaultFile, master: SecretKey) -> Self {
+    pub(crate) fn from_master(file: &VaultFile, master: SecretKey) -> Self {
         Self {
             vault_id: file.vault_id.clone(),
             keys: Keyring::derive(&master, file.key_epoch),
@@ -205,6 +205,10 @@ impl UnlockedVault {
 
     pub fn keys(&self) -> &Keyring {
         &self.keys
+    }
+
+    pub(crate) fn master(&self) -> &SecretKey {
+        &self.master
     }
 
     /// Returns an updated vault file; the recovery key keeps working.

@@ -15,7 +15,8 @@ is usable locally before sync exists.
 |---|---|
 | M0 | ✅ done |
 | M1 | ✅ done |
-| M2–M8 | not started |
+| M2 | ✅ done (`revisions` / `remote_state` tables moved to M6, where they're used) |
+| M3–M8 | not started |
 
 ## M0 — Foundations & spikes
 Set up the project and kill the big unknowns before building on them.

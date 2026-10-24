@@ -1,0 +1,480 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
+
+use super::*;
+use crate::vault::{self, KdfParams};
+
+struct Fixture {
+    _dir: tempfile::TempDir,
+    path: std::path::PathBuf,
+    store: Store,
+    clock: Arc<AtomicI64>,
+}
+
+const KEY: [u8; 32] = [5; 32];
+
+fn fixture() -> Fixture {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("memoir.db");
+    let mut store = Store::open(&path, &SecretKey::from_bytes(KEY)).unwrap();
+    let clock = Arc::new(AtomicI64::new(1_000_000));
+    let c = clock.clone();
+    // Each call advances 1 ms, so timestamps are distinct and ordered.
+    store.set_clock(move || c.fetch_add(1, Ordering::SeqCst));
+    Fixture {
+        _dir: dir,
+        path,
+        store,
+        clock,
+    }
+}
+
+fn last(parent: Option<ObjectId>) -> Placement {
+    Placement::last_in(parent)
+}
+
+fn titles(items: &[TreeItem], parent: Option<ObjectId>) -> Vec<String> {
+    items
+        .iter()
+        .filter(|i| i.parent_id == parent)
+        .map(|i| i.title.clone())
+        .collect()
+}
+
+fn outbox(store: &Store) -> Vec<ObjectId> {
+    let mut stmt = store
+        .conn
+        .prepare("SELECT object_id FROM outbox ORDER BY object_id")
+        .unwrap();
+    stmt.query_map([], |r| r.get(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect()
+}
+
+#[test]
+fn tree_orders_folders_first_then_by_position() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let b = s.create_note(last(None), "B", "").unwrap();
+    s.create_folder(last(None), "Folder 2").unwrap();
+    s.create_note(
+        Placement {
+            parent: None,
+            position: Position::First,
+        },
+        "A",
+        "",
+    )
+    .unwrap();
+    s.create_note(
+        Placement {
+            parent: None,
+            position: Position::After(b),
+        },
+        "C",
+        "",
+    )
+    .unwrap();
+    s.create_folder(
+        Placement {
+            parent: None,
+            position: Position::First,
+        },
+        "Folder 1",
+    )
+    .unwrap();
+    s.create_note(
+        Placement {
+            parent: None,
+            position: Position::Before(b),
+        },
+        "A2",
+        "",
+    )
+    .unwrap();
+
+    assert_eq!(
+        titles(&s.tree().unwrap(), None),
+        ["Folder 1", "Folder 2", "A", "A2", "B", "C"]
+    );
+}
+
+#[test]
+fn nested_folders_and_moves() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let work = s.create_folder(last(None), "Work").unwrap();
+    let projects = s.create_folder(last(Some(work)), "Projects").unwrap();
+    let note = s.create_note(last(None), "Plan", "").unwrap();
+
+    s.move_item(&note, last(Some(projects))).unwrap();
+    let tree = s.tree().unwrap();
+    assert_eq!(titles(&tree, Some(projects)), ["Plan"]);
+    assert_eq!(titles(&tree, None), ["Work"]);
+
+    // Reorder within the same folder.
+    let other = s.create_note(last(Some(projects)), "Other", "").unwrap();
+    s.move_item(
+        &other,
+        Placement {
+            parent: Some(projects),
+            position: Position::First,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        titles(&s.tree().unwrap(), Some(projects)),
+        ["Other", "Plan"]
+    );
+
+    assert!(matches!(
+        s.move_item(&work, last(Some(projects))),
+        Err(StoreError::Cycle)
+    ));
+    assert!(matches!(
+        s.move_item(&work, last(Some(work))),
+        Err(StoreError::Cycle)
+    ));
+    assert!(matches!(
+        s.move_item(&projects, last(Some(note))),
+        Err(StoreError::NotAFolder(_))
+    ));
+    assert!(matches!(
+        s.move_item(
+            &note,
+            Placement {
+                parent: None,
+                position: Position::After(other)
+            }
+        ),
+        Err(StoreError::NotASibling(_))
+    ));
+    assert!(matches!(
+        s.create_note(last(Some(ObjectId::generate())), "x", ""),
+        Err(StoreError::NotFound(_))
+    ));
+}
+
+#[test]
+fn rename_validates_folder_names() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let folder = s.create_folder(last(None), "  Trips  ").unwrap();
+    assert_eq!(titles(&s.tree().unwrap(), None), ["Trips"]);
+    assert!(matches!(
+        s.rename(&folder, "   "),
+        Err(StoreError::EmptyName)
+    ));
+    assert!(matches!(
+        s.create_folder(last(None), ""),
+        Err(StoreError::EmptyName)
+    ));
+
+    let note = s.create_note(last(None), "", "").unwrap();
+    s.rename(&note, "Groceries").unwrap();
+    assert_eq!(s.search("grocer", 10).unwrap()[0].id, note);
+}
+
+#[test]
+fn saving_unchanged_content_is_a_no_op() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let note = s.create_note(last(None), "T", "body").unwrap();
+    let before = s.note(&note).unwrap();
+    s.save_note(&note, "T", "body").unwrap();
+    s.set_tags(&note, &[]).unwrap();
+    s.rename(&note, "T").unwrap();
+    assert_eq!(s.note(&note).unwrap().updated_at, before.updated_at);
+
+    s.save_note(&note, "T", "new body").unwrap();
+    let after = s.note(&note).unwrap();
+    assert_eq!(after.body, "new body");
+    assert!(after.updated_at > before.updated_at);
+}
+
+#[test]
+fn every_change_is_queued_once_per_object() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let a = s.create_note(last(None), "a", "").unwrap();
+    let b = s.create_folder(last(None), "b").unwrap();
+    s.save_note(&a, "a", "1").unwrap();
+    s.save_note(&a, "a", "2").unwrap();
+    s.move_item(&a, last(Some(b))).unwrap();
+    let mut expected = vec![a, b];
+    expected.sort();
+    assert_eq!(outbox(s), expected);
+    assert_eq!(s.pending_changes().unwrap(), 2);
+}
+
+#[test]
+fn trash_hides_folder_contents_and_restore_brings_them_back() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let folder = s.create_folder(last(None), "Old").unwrap();
+    let sub = s.create_folder(last(Some(folder)), "Sub").unwrap();
+    let note = s.create_note(last(Some(sub)), "Inside", "findme").unwrap();
+
+    s.move_to_trash(&folder).unwrap();
+    assert!(s.tree().unwrap().is_empty());
+    assert!(s.search("findme", 10).unwrap().is_empty());
+    let trash: Vec<_> = s
+        .trashed_items()
+        .unwrap()
+        .into_iter()
+        .map(|i| i.id)
+        .collect();
+    assert_eq!(trash, [folder]);
+    assert!(matches!(
+        s.create_note(last(Some(sub)), "x", ""),
+        Err(StoreError::InTrash(_))
+    ));
+
+    s.restore(&folder).unwrap();
+    assert_eq!(s.tree().unwrap().len(), 3);
+    assert_eq!(s.search("findme", 10).unwrap()[0].id, note);
+    assert!(matches!(s.restore(&folder), Err(StoreError::NotInTrash(_))));
+}
+
+#[test]
+fn restoring_into_a_trashed_folder_goes_to_top_level() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let folder = s.create_folder(last(None), "F").unwrap();
+    let note = s.create_note(last(Some(folder)), "N", "").unwrap();
+    s.move_to_trash(&note).unwrap();
+    s.move_to_trash(&folder).unwrap();
+
+    s.restore(&note).unwrap();
+    let tree = s.tree().unwrap();
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].id, note);
+    assert_eq!(tree[0].parent_id, None);
+}
+
+#[test]
+fn purge_deletes_subtrees_and_queues_deletions() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let folder = s.create_folder(last(None), "F").unwrap();
+    let note = s.create_note(last(Some(folder)), "N", "gone").unwrap();
+    let keep = s.create_note(last(None), "Keep", "").unwrap();
+
+    assert!(matches!(s.purge(&folder), Err(StoreError::NotInTrash(_))));
+    s.move_to_trash(&folder).unwrap();
+    s.purge(&folder).unwrap();
+
+    assert!(matches!(s.note(&note), Err(StoreError::NotFound(_))));
+    assert!(s.trashed_items().unwrap().is_empty());
+    assert!(s.search("gone", 10).unwrap().is_empty());
+    let fts_rows: i64 = s
+        .conn
+        .query_row("SELECT count(*) FROM notes_fts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(fts_rows, 1);
+    // Deleted ids stay in the outbox as tombstones.
+    let mut expected = vec![folder, note, keep];
+    expected.sort();
+    assert_eq!(outbox(s), expected);
+}
+
+#[test]
+fn purge_trashed_before_cutoff() {
+    let mut f = fixture();
+    let a = f.store.create_note(last(None), "a", "").unwrap();
+    let b = f.store.create_note(last(None), "b", "").unwrap();
+    f.store.move_to_trash(&a).unwrap();
+    let cutoff = f.clock.load(Ordering::SeqCst);
+    f.store.move_to_trash(&b).unwrap();
+
+    assert_eq!(f.store.purge_trashed_before(cutoff).unwrap(), 1);
+    assert_eq!(f.store.trashed_items().unwrap()[0].id, b);
+    assert_eq!(f.store.empty_trash().unwrap(), 1);
+    assert!(f.store.trashed_items().unwrap().is_empty());
+}
+
+#[test]
+fn search_ranks_strips_markdown_and_marks_matches() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let title_hit = s
+        .create_note(last(None), "Kraków trip", "Plans for the weekend")
+        .unwrap();
+    let body_hit = s
+        .create_note(
+            last(None),
+            "Misc",
+            "We could visit [Kraków](https://krakow.example) one day",
+        )
+        .unwrap();
+    let tagged = s.create_note(last(None), "Receipts", "").unwrap();
+    s.set_tags(
+        &tagged,
+        &[
+            "finance".into(),
+            " Finance ".into(),
+            "".into(),
+            "tax".into(),
+        ],
+    )
+    .unwrap();
+    assert_eq!(s.note(&tagged).unwrap().tags, ["finance", "tax"]);
+
+    let hits = s.search("krakow", 10).unwrap();
+    assert_eq!(
+        hits.iter().map(|h| h.id).collect::<Vec<_>>(),
+        [title_hit, body_hit]
+    );
+    assert!(
+        hits[1]
+            .snippet
+            .contains(&format!("{MATCH_START}Kraków{MATCH_END}"))
+    );
+
+    assert_eq!(s.search("trip plan", 10).unwrap()[0].id, title_hit);
+    assert_eq!(s.search("fina", 10).unwrap()[0].id, tagged);
+    assert!(
+        s.search("example", 10).unwrap().is_empty(),
+        "URLs are not indexed"
+    );
+    assert!(s.search("   ", 10).unwrap().is_empty());
+    // FTS syntax in user input must not cause errors.
+    for weird in ["\"", "a OR", "NEAR(", "*", "-x", "col:val", "(", "^"] {
+        s.search(weird, 10).unwrap();
+    }
+}
+
+fn bodies(store: &Store, id: &ObjectId) -> Vec<String> {
+    store
+        .history(id)
+        .unwrap()
+        .into_iter()
+        .map(|v| v.body)
+        .collect()
+}
+
+#[test]
+fn history_keeps_the_version_before_a_burst_and_after_a_pause() {
+    let mut f = fixture();
+    const MIN: i64 = 60_000;
+    let at = |f: &Fixture, t: i64| f.clock.store(t, Ordering::SeqCst);
+
+    at(&f, 0);
+    let note = f.store.create_note(last(None), "T", "v1").unwrap();
+    // A burst of autosaves, one a minute: only the original is kept.
+    for (i, body) in ["v2", "v3", "v4", "v5"].iter().enumerate() {
+        at(&f, (i as i64 + 1) * MIN);
+        f.store.save_note(&note, "T", body).unwrap();
+    }
+    assert_eq!(bodies(&f.store, &note), ["v1"]);
+
+    // Editing again after a 20-minute pause keeps the settled v5.
+    at(&f, 24 * MIN);
+    f.store.save_note(&note, "T", "v6").unwrap();
+    assert_eq!(bodies(&f.store, &note), ["v5", "v1"]);
+
+    // Restoring keeps the version it replaces.
+    let v1 = f.store.history(&note).unwrap()[1].saved_at;
+    f.store.restore_version(&note, v1).unwrap();
+    assert_eq!(f.store.note(&note).unwrap().body, "v1");
+    assert_eq!(bodies(&f.store, &note), ["v6", "v5", "v1"]);
+    assert!(matches!(
+        f.store.restore_version(&note, 42),
+        Err(StoreError::NoSuchVersion(..))
+    ));
+}
+
+#[test]
+fn history_checkpoints_long_continuous_editing() {
+    let mut f = fixture();
+    const MIN: i64 = 60_000;
+    f.clock.store(0, Ordering::SeqCst);
+    let note = f.store.create_note(last(None), "T", "v0").unwrap();
+    // 35 minutes of saving once a minute.
+    for i in 1..=35 {
+        f.clock.store(i * MIN, Ordering::SeqCst);
+        f.store.save_note(&note, "T", &format!("v{i}")).unwrap();
+    }
+    assert_eq!(bodies(&f.store, &note), ["v30", "v20", "v10", "v0"]);
+}
+
+#[test]
+fn history_is_capped() {
+    let mut f = fixture();
+    let note = f.store.create_note(last(None), "T", "v0").unwrap();
+    for i in 1..=(HISTORY_MAX_VERSIONS + 10) {
+        f.clock.store(i * HISTORY_INTERVAL_MS * 2, Ordering::SeqCst);
+        f.store.save_note(&note, "T", &format!("v{i}")).unwrap();
+    }
+    assert_eq!(
+        f.store.history(&note).unwrap().len() as i64,
+        HISTORY_MAX_VERSIONS
+    );
+}
+
+#[test]
+fn orphans_are_shown_at_top_level() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let folder = s.create_folder(last(None), "F").unwrap();
+    let note = s.create_note(last(Some(folder)), "N", "").unwrap();
+    // As if another device purged the folder and sync removed only it.
+    s.conn
+        .execute("DELETE FROM objects WHERE id = ?1", [folder])
+        .unwrap();
+
+    let tree = s.tree().unwrap();
+    assert_eq!(tree.len(), 1);
+    assert_eq!((tree[0].id, tree[0].parent_id), (note, None));
+}
+
+#[test]
+fn data_vault_and_device_id_survive_reopening() {
+    let mut f = fixture();
+    let new_vault = vault::create(
+        "correct horse battery",
+        KdfParams {
+            m_kib: 64,
+            t: 1,
+            p: 1,
+        },
+    )
+    .unwrap();
+    f.store
+        .save_vault(&new_vault.file, &new_vault.vault)
+        .unwrap();
+    let note = f
+        .store
+        .create_note(last(None), "Persisted", "body")
+        .unwrap();
+    let device = f.store.device_id().unwrap();
+    drop(f.store);
+
+    let store = Store::open(&f.path, &SecretKey::from_bytes(KEY)).unwrap();
+    assert_eq!(store.note(&note).unwrap().title, "Persisted");
+    assert_eq!(store.device_id().unwrap(), device);
+    let (file, vault) = store.load_vault().unwrap().unwrap();
+    assert_eq!(file, new_vault.file);
+    assert_eq!(
+        vault.keys().object.as_bytes(),
+        new_vault.vault.keys().object.as_bytes()
+    );
+
+    drop(store);
+    assert!(Store::open(&f.path, &SecretKey::from_bytes([6; 32])).is_err());
+}
+
+#[test]
+fn rejects_database_from_newer_app() {
+    let f = fixture();
+    f.store
+        .conn
+        .pragma_update(None, "user_version", 99)
+        .unwrap();
+    drop(f.store);
+    assert!(matches!(
+        Store::open(&f.path, &SecretKey::from_bytes(KEY)),
+        Err(StoreError::NewerSchema(99))
+    ));
+}
