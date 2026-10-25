@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use memoir_core::blobs::{BlobError, BlobStore};
 use memoir_core::crypto::{Keyring, RecoveryKey};
-use memoir_core::keystore::{SecretStore, local_db_account};
+use memoir_core::keystore::{SecretStore, cloud_account, local_db_account};
 use memoir_core::store::{Store, StoreError};
 use memoir_core::vault::{self, KdfParams, NewVault, UnlockedVault, VaultError, VaultFile};
 use serde::Serialize;
@@ -115,6 +115,37 @@ impl Session {
             (Some(store), Some(blobs)) => Ok((store, blobs)),
             _ => Err(SessionError::Locked),
         }
+    }
+
+    /// The unlocked vault's public file (`vault.json`).
+    pub fn vault_file(&self) -> Result<VaultFile> {
+        if self.store.is_none() {
+            return Err(SessionError::Locked);
+        }
+        self.read_vault_file()
+    }
+
+    /// The cloud sign-in (refresh token) remembered for this vault.
+    pub fn cloud_token(&self) -> Result<Option<Zeroizing<String>>> {
+        let account = cloud_account(&self.vault_file()?.vault_id);
+        let Some(bytes) = self.keystore.load_bytes(&account).map_err(io_error)? else {
+            return Ok(None);
+        };
+        Ok(Some(Zeroizing::new(
+            String::from_utf8_lossy(&bytes).into_owned(),
+        )))
+    }
+
+    pub fn set_cloud_token(&self, token: &str) -> Result<()> {
+        let account = cloud_account(&self.vault_file()?.vault_id);
+        self.keystore
+            .store_bytes(&account, token.as_bytes())
+            .map_err(io_error)
+    }
+
+    pub fn forget_cloud_token(&self) -> Result<()> {
+        let account = cloud_account(&self.vault_file()?.vault_id);
+        self.keystore.remove(&account).map_err(io_error)
     }
 
     /// Where decrypted copies go when an attachment is opened in another program.
@@ -293,37 +324,8 @@ mod tests {
     };
     const PASS: &str = "correct horse battery";
 
-    /// Shares one in-memory keychain between sessions, like the OS one.
-    struct SharedKeychain(Arc<MemoryStore>);
-
-    impl SecretStore for SharedKeychain {
-        fn load(
-            &self,
-            a: &str,
-        ) -> std::result::Result<
-            Option<memoir_core::crypto::SecretKey>,
-            memoir_core::keystore::KeystoreError,
-        > {
-            self.0.load(a)
-        }
-        fn store(
-            &self,
-            a: &str,
-            k: &memoir_core::crypto::SecretKey,
-        ) -> std::result::Result<(), memoir_core::keystore::KeystoreError> {
-            self.0.store(a, k)
-        }
-        fn remove(&self, a: &str) -> std::result::Result<(), memoir_core::keystore::KeystoreError> {
-            self.0.remove(a)
-        }
-    }
-
     fn session(dir: &Path, keychain: &Arc<MemoryStore>) -> Session {
-        Session::with_kdf(
-            dir.to_owned(),
-            Box::new(SharedKeychain(keychain.clone())),
-            FAST,
-        )
+        Session::with_kdf(dir.to_owned(), Box::new(keychain.clone()), FAST)
     }
 
     fn set_up(dir: &Path, keychain: &Arc<MemoryStore>) -> String {

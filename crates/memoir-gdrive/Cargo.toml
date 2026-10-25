@@ -10,14 +10,21 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-
-[dev-dependencies]
+memoir-core = { path = "../memoir-core" }
 base64 = "0.23.1"
 getrandom = "0.4.3"
-open = "5.4.5"
+log = "0.4"
 reqwest = { version = "0.13.5", features = ["json", "form", "query"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
-tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["net", "io-util", "time", "sync", "macros"] }
 url = "2.5.8"
+zeroize = "1.9.1"
+
+[dev-dependencies]
+open = "5.4.5"
+reqwest = "0.13.5"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
+wiremock = "0.6.5"

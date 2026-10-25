@@ -80,6 +80,13 @@ const MIGRATIONS: &[&str] = &[
         uploaded_at  INTEGER
     );
     "#,
+    // 4: the connected cloud account and its folders (and, in M6, sync state).
+    r#"
+    CREATE TABLE remote_state (
+        key    TEXT PRIMARY KEY,
+        value  TEXT NOT NULL
+    );
+    "#,
 ];
 
 pub fn migrate(conn: &mut Connection) -> Result<(), StoreError> {

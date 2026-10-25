@@ -1,4 +1,5 @@
 mod attachments;
+mod cloud;
 mod commands;
 mod session;
 mod shutdown;
@@ -41,8 +42,10 @@ pub fn run() {
             log::info!("session opened: {:?}", session.status());
             app.manage(AppState {
                 session: std::sync::Mutex::new(session),
+                cloud: cloud::Cloud::default(),
                 editor_flushed: Notify::new(),
             });
+            cloud::restore(&app.state::<AppState>());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -80,6 +83,11 @@ pub fn run() {
             attachments::add_attachment,
             attachments::open_attachment,
             attachments::save_attachment,
+            cloud::cloud_status,
+            cloud::check_drive,
+            cloud::connect_drive,
+            cloud::cancel_connect,
+            cloud::disconnect_drive,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Memoir");

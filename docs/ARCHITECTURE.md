@@ -311,6 +311,36 @@ network loss, then assert: **all devices converge, and no edited text is lost.**
 - Bonus: Drive keeps its own file revisions, but our append-only DAG already
   gives us history independent of it.
 
+**Implementation (M5)**: `memoir_core::remote::StorageProvider` is the
+interface the sync engine uses — immutable files in three areas (`Memoir/`,
+`objects/`, `blobs/`), list, download, upload (always a new file), delete,
+and a change feed with a cursor; `MemoryProvider` is an in-memory version with
+failure injection for tests. `memoir-gdrive` implements it for Drive:
+- requests carry an access token refreshed a minute before expiry, and once
+  more on a 401; an `invalid_grant` refresh means "connect again";
+- network errors, 429, 5xx and rate-limit 403s are retried with exponential
+  backoff and jitter (honouring `Retry-After`), up to 5 tries;
+- uploads over 5 MB use a resumable session in 8 MiB chunks; after a failure
+  the session is asked how much arrived and the upload continues from there
+  (an expired session is restarted);
+- the `Memoir` folders are found (oldest wins if two devices raced) or created.
+
+Connecting (Settings) runs the browser sign-in, sets up the folders, and
+uploads `vault.json` — or refuses a Drive whose `vault.json` belongs to a
+different notebook (joining an existing notebook is part of M6). The refresh
+token is kept in the OS keychain per vault (`cloud-token/<vault id>`); the
+account and folder ids in the `remote_state` table. Disconnecting revokes the
+token and forgets both; files in Drive stay. The OAuth client comes from
+`MEMOIR_GOOGLE_CLIENT_ID` / `_SECRET` (build time, or run time in development).
+
+**Checked against a real Drive** (`drive_check`, 2026-10-25): sign-in,
+folders (found, not duplicated, on a second run), a 27 B and a 12 MB
+(resumable) upload in ~4 s, listing, byte-exact downloads, and the change feed
+all work. The change feed is **eventually consistent**: new files appeared at
+once, deletions about 0.8 s later. M6 therefore treats the feed as a hint
+that catches up — a change missing from one poll arrives in a later one — and
+never assumes a just-made change is already visible to other devices.
+
 ---
 
 ## 8. Data ownership & recovery

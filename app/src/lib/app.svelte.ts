@@ -7,7 +7,7 @@ import type { EditorOptions } from './editor/extensions'
 import { ancestorIds, childrenMap, visibleRows } from './tree'
 
 type Screen = 'loading' | Status
-type View = 'note' | 'trash'
+type View = 'note' | 'trash' | 'settings'
 
 const EXPANDED_KEY = 'memoir.expanded'
 const OPEN_NOTE_KEY = 'memoir.openNote'

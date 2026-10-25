@@ -14,6 +14,7 @@ use crate::session::{Session, Status};
 
 pub struct AppState {
     pub session: Mutex<Session>,
+    pub cloud: crate::cloud::Cloud,
     /// Signalled by the UI when it has saved pending edits (see shutdown.rs).
     pub editor_flushed: Notify,
 }
@@ -61,7 +62,9 @@ pub fn unlock(state: State<'_, AppState>, passphrase: String, remember: bool) ->
     state
         .session()?
         .unlock(&passphrase, remember)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::cloud::restore(&state);
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -74,7 +77,9 @@ pub fn unlock_with_recovery_key(
     state
         .session()?
         .unlock_with_recovery_key(&recovery_key, &new_passphrase, remember)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::cloud::restore(&state);
+    Ok(())
 }
 
 #[tauri::command(async)]

@@ -49,4 +49,10 @@ export const tauriApi: Api = {
   attachmentUrl: (id) => convertFileSrc(id, 'attachment'),
   openAttachment: (id, name) => invoke('open_attachment', { id, name }),
   saveAttachment: (id, name) => invoke('save_attachment', { id, name }),
+
+  cloudStatus: () => invoke('cloud_status'),
+  checkDrive: () => invoke('check_drive'),
+  connectDrive: () => invoke('connect_drive'),
+  cancelConnect: () => invoke('cancel_connect'),
+  disconnectDrive: () => invoke('disconnect_drive'),
 }

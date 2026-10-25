@@ -1,3 +1,8 @@
-//! Google Drive implementation of Memoir's `StorageProvider` (milestone M5).
-//!
-//! For now this crate only hosts the OAuth spike: `examples/oauth_spike.rs`.
+//! Google Drive storage for Memoir: sign-in ([`oauth`]) and the
+//! [`DriveProvider`] implementation of `memoir_core::remote::StorageProvider`.
+
+pub mod drive;
+pub mod oauth;
+
+pub use drive::{Account, DriveConfig, DriveProvider, Folders, RetryPolicy};
+pub use oauth::{OAuthConfig, OAuthError};

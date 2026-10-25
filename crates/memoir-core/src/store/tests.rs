@@ -686,3 +686,25 @@ fn attachment_metadata_is_recorded_once() {
         })
     );
 }
+
+#[test]
+fn remote_state_is_stored_and_cleared() {
+    let mut f = fixture();
+    assert_eq!(f.store.remote_value("provider").unwrap(), None);
+    f.store
+        .set_remote_values(&[("provider", "gdrive"), ("account", "me@example.com")])
+        .unwrap();
+    f.store
+        .set_remote_values(&[("account", "other@example.com")])
+        .unwrap();
+    assert_eq!(
+        f.store.remote_value("provider").unwrap().as_deref(),
+        Some("gdrive")
+    );
+    assert_eq!(
+        f.store.remote_value("account").unwrap().as_deref(),
+        Some("other@example.com")
+    );
+    f.store.clear_remote_state().unwrap();
+    assert_eq!(f.store.remote_value("provider").unwrap(), None);
+}

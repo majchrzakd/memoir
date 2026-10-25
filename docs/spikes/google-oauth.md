@@ -42,12 +42,31 @@ Google Search Console. Plan for M8:
 3. Fill in the URLs and click **Publish app**. With only the `drive.file`
    scope no Google review is required.
 
-## 5. Run the spike
+## 5. Give Memoir your client
+The app reads the client from two environment variables — at build time
+(release builds) or at run time (development). In the PowerShell window you
+build or run from:
+
 ```powershell
 $env:MEMOIR_GOOGLE_CLIENT_ID = "<client id>"
 $env:MEMOIR_GOOGLE_CLIENT_SECRET = "<client secret>"
-cargo run -p memoir-gdrive --example oauth_spike
+npm.cmd --prefix app run tauri dev
 ```
-A browser tab opens for consent; afterwards the terminal prints the results
-of the four checks. It creates a `Memoir spike` folder in your Drive, which
-you can delete afterwards.
+
+Then **Settings → Connect Google Drive**. Without the variables, Settings
+says the build has no Google sign-in configured.
+
+## 6. Check the Drive connection (optional)
+With the same variables set:
+
+```powershell
+cargo run -p memoir-gdrive --example drive_check
+```
+
+It signs in through the browser, then — in a separate `Memoir check` folder,
+never your real `Memoir` one — uploads a small and a 12 MB file, lists,
+downloads, follows the change feed and deletes them again, and finally
+revokes its access. Delete the empty `Memoir check` folder afterwards.
+
+While the OAuth app is in **Testing**, Google expires the sign-in after 7
+days; Memoir then shows "Connect again" in Settings.

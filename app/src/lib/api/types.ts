@@ -123,6 +123,24 @@ export interface Api {
   openAttachment(id: string, name: string): Promise<void>
   /** Asks where to save an attachment; false if cancelled. */
   saveAttachment(id: string, name: string): Promise<boolean>
+
+  /** Google Drive connection. */
+  cloudStatus(): Promise<CloudStatus>
+  /** Verifies the connection with Google (network). */
+  checkDrive(): Promise<CloudStatus>
+  /** Opens the browser for sign-in; resolves when connected. */
+  connectDrive(): Promise<CloudStatus>
+  cancelConnect(): Promise<void>
+  disconnectDrive(): Promise<CloudStatus>
+}
+
+export interface CloudStatus {
+  /** This build knows a Google OAuth client. */
+  configured: boolean
+  connected: boolean
+  connecting: boolean
+  account: string | null
+  problem: string | null
 }
 
 export interface AttachmentInfo {

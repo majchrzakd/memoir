@@ -64,6 +64,15 @@
       <Icon name="trash" />
       <span>Trash</span>
     </button>
+    <button
+      class="icon"
+      class:active={app.view === 'settings'}
+      title="Settings"
+      aria-label="Settings"
+      onclick={() => (app.view = 'settings')}
+    >
+      <Icon name="settings" size={18} />
+    </button>
   </footer>
 </nav>
 
@@ -153,8 +162,15 @@
   }
 
   footer {
+    display: flex;
+    gap: 4px;
     padding: 6px;
     border-top: 1px solid var(--border);
+  }
+
+  footer .icon.active {
+    background: var(--bg-selected);
+    color: var(--text);
   }
 
   .trash {

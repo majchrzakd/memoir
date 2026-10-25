@@ -18,7 +18,8 @@ is usable locally before sync exists.
 | M2 | ✅ done (`revisions` / `remote_state` tables moved to M6, where they're used) |
 | M3 | ✅ done (plus feedback: note dates, Later list, threads) |
 | M4 | ✅ done — attachment cleanup (unreferenced files) moved to M6 |
-| M5–M8 | not started |
+| M5 | ✅ done — checked against a real Drive (change feed reports deletions ~0.8 s late) |
+| M6–M8 | not started |
 
 ## M0 — Foundations & spikes
 Set up the project and kill the big unknowns before building on them.

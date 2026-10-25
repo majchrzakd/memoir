@@ -10,6 +10,7 @@ import {
   MATCH_START,
   MAX_ATTACHMENT_SIZE,
   type Api,
+  type CloudStatus,
   type Id,
   type Kind,
   type Note,
@@ -39,6 +40,14 @@ export function createMockApi(): Api {
   const objects = new Map<Id, Obj>()
   // Attachment id → object URL of the file.
   const attachments = new Map<string, string>()
+  const cloud: CloudStatus = {
+    configured: true,
+    connected: false,
+    connecting: false,
+    account: null,
+    problem: null,
+  }
+  let cancelConnect = () => {}
   let seq = 0
   const newId = () => `MOCK${String(++seq).padStart(22, '0')}`
   const now = () => Date.now()
@@ -430,6 +439,31 @@ export function createMockApi(): Api {
     },
     async openAttachment(id) {
       window.open(attachments.get(id), '_blank')
+    },
+    async cloudStatus() {
+      return { ...cloud }
+    },
+    async checkDrive() {
+      return { ...cloud }
+    },
+    async connectDrive() {
+      cloud.connecting = true
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 1500) // pretend the user signs in
+        cancelConnect = () => {
+          clearTimeout(timer)
+          reject('Connecting was cancelled.')
+        }
+      }).finally(() => (cloud.connecting = false))
+      Object.assign(cloud, { connected: true, account: 'you@example.com', problem: null })
+      return { ...cloud }
+    },
+    async cancelConnect() {
+      cancelConnect()
+    },
+    async disconnectDrive() {
+      Object.assign(cloud, { connected: false, account: null })
+      return { ...cloud }
     },
     async saveAttachment(id, name) {
       const a = document.createElement('a')

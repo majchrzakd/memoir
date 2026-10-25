@@ -3,6 +3,7 @@
   import Editor from '../editor/Editor.svelte'
   import SearchPalette from '../SearchPalette.svelte'
   import Sidebar from '../sidebar/Sidebar.svelte'
+  import SettingsView from '../SettingsView.svelte'
   import TrashView from '../TrashView.svelte'
 
   const WIDTH_KEY = 'memoir.sidebarWidth'
@@ -69,6 +70,8 @@
   <main class="content">
     {#if app.view === 'trash'}
       <TrashView />
+    {:else if app.view === 'settings'}
+      <SettingsView />
     {:else if app.openNoteId}
       <Editor noteId={app.openNoteId} />
     {:else}

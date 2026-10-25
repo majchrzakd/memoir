@@ -890,6 +890,37 @@ impl Store {
             .optional()?)
     }
 
+    // ---- Cloud connection ----------------------------------------------
+
+    pub fn remote_value(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT value FROM remote_state WHERE key = ?1",
+                [key],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn set_remote_values(&mut self, values: &[(&str, &str)]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for (key, value) in values {
+            tx.execute(
+                "INSERT OR REPLACE INTO remote_state (key, value) VALUES (?1, ?2)",
+                params![key, value],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Forgets the connected account (on disconnect).
+    pub fn clear_remote_state(&mut self) -> Result<()> {
+        self.conn.execute("DELETE FROM remote_state", [])?;
+        Ok(())
+    }
+
     /// Number of local changes not yet pushed to the cloud.
     pub fn pending_changes(&self) -> Result<u64> {
         let n: i64 = self
