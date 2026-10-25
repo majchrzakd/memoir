@@ -28,6 +28,8 @@ interface Obj {
   created_at: number
   updated_at: number
   trashed_at: number | null
+  later_at: number | null
+  due_date: string | null
 }
 
 const MOCK_PASSPHRASE = 'correct horse'
@@ -117,6 +119,8 @@ export function createMockApi(): Api {
       created_at: t,
       updated_at: t,
       trashed_at: null,
+      later_at: null,
+      due_date: null,
     })
     return id
   }
@@ -143,6 +147,19 @@ export function createMockApi(): Api {
     for (let i = 1; i <= 40; i++) {
       create('note', last(work), `Daily log ${i}`, `Worked on item ${i}. Next: item ${i + 1}.`)
     }
+
+    // Spread creation and edit times over the past weeks.
+    const all = [...objects.values()]
+    all.forEach((o, i) => {
+      o.created_at = now() - (all.length - i) * 9 * 3600_000
+      o.updated_at = o.created_at + (i % 5) * 3600_000
+    })
+    // A few notes on the Later list: one overdue, one due soon, one undated.
+    const day = (offset: number) => new Date(now() + offset * 86400_000).toISOString().slice(0, 10)
+    const byTitle = (t: string) => all.find((o) => o.title === t)!
+    Object.assign(byTitle('Reading list'), { later_at: now(), due_date: day(3) })
+    Object.assign(byTitle('Daily log 7'), { later_at: now(), due_date: day(-1) })
+    Object.assign(byTitle('Meeting notes'), { later_at: now(), due_date: null })
   }
 
   const plain = (md: string) =>
@@ -214,7 +231,6 @@ export function createMockApi(): Api {
       const o = get(id)
       o.order = place(placement, id)
       o.parent_id = placement.parent
-      o.updated_at = now()
     },
     async moveToTrash(id) {
       get(id).trashed_at ??= now()
@@ -245,6 +261,7 @@ export function createMockApi(): Api {
       const o = get(id)
       if (o.kind !== 'note') throw `${id} is not a note`
       const { id: noteId, parent_id, title, body, tags, created_at, updated_at, trashed_at } = o
+      const { later_at, due_date } = o
       return {
         id: noteId,
         parent_id,
@@ -254,6 +271,8 @@ export function createMockApi(): Api {
         created_at,
         updated_at,
         trashed_at,
+        later_at,
+        due_date,
       }
     },
     async saveNote(id, title, body) {
@@ -283,6 +302,32 @@ export function createMockApi(): Api {
                 text.slice(at + words[0].length, at + 80)
           return { id: o.id, parent_id: o.parent_id, title: o.title, snippet }
         })
+    },
+    async setLater(id, later, dueDate) {
+      const o = get(id)
+      if (o.kind !== 'note') throw `${id} is not a note`
+      if (later && dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))
+        throw `"${dueDate}" is not a valid date (expected YYYY-MM-DD)`
+      o.later_at = later ? (o.later_at ?? now()) : null
+      o.due_date = later ? dueDate : null
+    },
+    async laterNotes() {
+      return [...objects.values()]
+        .filter((o) => o.kind === 'note' && o.later_at !== null && !hidden(o))
+        .sort(
+          (a, b) =>
+            Number(a.due_date === null) - Number(b.due_date === null) ||
+            (a.due_date ?? '').localeCompare(b.due_date ?? '') ||
+            b.created_at - a.created_at,
+        )
+        .map(({ id, parent_id, title, created_at, updated_at, due_date }) => ({
+          id,
+          parent_id,
+          title,
+          created_at,
+          updated_at,
+          due_date,
+        }))
     },
   }
   return api

@@ -478,3 +478,95 @@ fn rejects_database_from_newer_app() {
         Err(StoreError::NewerSchema(99))
     ));
 }
+
+#[test]
+fn later_list_is_sorted_by_due_date_then_creation() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let a = s.create_note(last(None), "a", "").unwrap();
+    let b = s.create_note(last(None), "b", "").unwrap();
+    let c = s.create_note(last(None), "c", "").unwrap();
+    let d = s.create_note(last(None), "d", "").unwrap();
+    let e = s.create_note(last(None), "e", "").unwrap();
+    s.create_note(last(None), "not later", "").unwrap();
+    let folder = s.create_folder(last(None), "Old").unwrap();
+    let hidden = s.create_note(last(Some(folder)), "in trash", "").unwrap();
+
+    s.set_later(&d, true, None).unwrap();
+    s.set_later(&c, true, Some("2026-11-05")).unwrap();
+    s.set_later(&a, true, None).unwrap();
+    s.set_later(&b, true, Some("2026-11-01")).unwrap();
+    s.set_later(&e, true, Some("2026-11-01")).unwrap();
+    s.set_later(&hidden, true, None).unwrap();
+    s.move_to_trash(&folder).unwrap();
+
+    let ids: Vec<ObjectId> = s.later_notes().unwrap().into_iter().map(|i| i.id).collect();
+    // Dated (soonest first; same date: newest first), then undated, newest first.
+    assert_eq!(ids, [e, b, c, d, a]);
+}
+
+#[test]
+fn set_later_validates_and_clears() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let note = s.create_note(last(None), "n", "").unwrap();
+
+    s.set_later(&note, true, None).unwrap();
+    let marked_at = s.note(&note).unwrap().later_at.unwrap();
+    // Changing only the due date keeps when it was marked.
+    s.set_later(&note, true, Some("2024-02-29")).unwrap();
+    let n = s.note(&note).unwrap();
+    assert_eq!(
+        (n.later_at, n.due_date.as_deref()),
+        (Some(marked_at), Some("2024-02-29"))
+    );
+
+    for bad in [
+        "2026-02-29",
+        "2026-13-01",
+        "2026-1-05",
+        "26-01-05",
+        "tomorrow",
+        "2026-04-31",
+        "",
+    ] {
+        assert!(
+            matches!(
+                s.set_later(&note, true, Some(bad)),
+                Err(StoreError::InvalidDate(_))
+            ),
+            "{bad}"
+        );
+    }
+
+    s.set_later(&note, false, Some("2026-01-01")).unwrap();
+    let n = s.note(&note).unwrap();
+    assert_eq!((n.later_at, n.due_date), (None, None));
+    assert!(s.later_notes().unwrap().is_empty());
+
+    let folder = s.create_folder(last(None), "F").unwrap();
+    assert!(matches!(
+        s.set_later(&folder, true, None),
+        Err(StoreError::NotANote(_))
+    ));
+}
+
+#[test]
+fn edited_time_reflects_content_only() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let folder = s.create_folder(last(None), "F").unwrap();
+    let note = s.create_note(last(None), "n", "").unwrap();
+    let created = s.note(&note).unwrap().updated_at;
+
+    s.move_item(&note, last(Some(folder))).unwrap();
+    s.set_later(&note, true, Some("2026-12-24")).unwrap();
+    s.move_to_trash(&note).unwrap();
+    s.restore(&note).unwrap();
+    assert_eq!(s.note(&note).unwrap().updated_at, created);
+    // ...but every one of those changes is still queued for sync.
+    assert!(outbox(s).contains(&note));
+
+    s.save_note(&note, "n", "text").unwrap();
+    assert!(s.note(&note).unwrap().updated_at > created);
+}

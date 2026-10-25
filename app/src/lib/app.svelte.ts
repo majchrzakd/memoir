@@ -50,6 +50,10 @@ class App {
   openNoteId = $state<Id | null>(load<Id | null>(OPEN_NOTE_KEY, null))
   renamingId = $state<Id | null>(null)
 
+  sidebarTab = $state<'notes' | 'later'>('notes')
+  /** Bumped whenever the Later list may have changed. */
+  laterVersion = $state(0)
+
   searchOpen = $state(false)
   confirmRequest = $state<ConfirmRequest | null>(null)
   error = $state<string | null>(null)
@@ -148,10 +152,15 @@ class App {
     })
   }
 
-  /** Updates a title in the tree after the editor saved it. */
-  titleSaved(id: Id, title: string) {
-    if (this.byId.get(id)?.title === title) return
-    this.items = this.items.map((i) => (i.id === id ? { ...i, title } : i))
+  /** Updates the tree (title, edit time) after the editor saved a note. */
+  noteSaved(id: Id, title: string, updatedAt: number) {
+    this.items = this.items.map((i) => (i.id === id ? { ...i, title, updated_at: updatedAt } : i))
+    this.laterChanged()
+  }
+
+  /** Tells the Later list to reload. */
+  laterChanged() {
+    this.laterVersion++
   }
 
   async move(id: Id, placement: Placement) {

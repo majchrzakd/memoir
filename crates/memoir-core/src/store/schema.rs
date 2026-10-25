@@ -62,6 +62,13 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (object_id, saved_at)
     ) WITHOUT ROWID;
     "#,
+    // 2: "Later" list — when a note was marked, and an optional due date
+    // (calendar date, YYYY-MM-DD, no time zone).
+    r#"
+    ALTER TABLE objects ADD COLUMN later_at INTEGER;
+    ALTER TABLE objects ADD COLUMN due_date TEXT;
+    CREATE INDEX objects_later ON objects (later_at) WHERE later_at IS NOT NULL;
+    "#,
 ];
 
 pub fn migrate(conn: &mut Connection) -> Result<(), StoreError> {

@@ -52,6 +52,8 @@ pub enum StoreError {
     InTrash(ObjectId),
     #[error("{0} is not in the trash")]
     NotInTrash(ObjectId),
+    #[error("{0:?} is not a valid date (expected YYYY-MM-DD)")]
+    InvalidDate(String),
     #[error("no saved version of {0} at {1}")]
     NoSuchVersion(ObjectId, i64),
     #[error("this database was written by a newer version of Memoir (schema {0})")]
@@ -152,6 +154,8 @@ pub struct TreeItem {
     pub parent_id: Option<ObjectId>,
     pub title: String,
     pub sort_key: String,
+    /// Last change to the content (title, body, tags) — not moves, trash or
+    /// the Later flag.
     pub updated_at: i64,
     pub trashed_at: Option<i64>,
 }
@@ -165,8 +169,24 @@ pub struct Note {
     pub body: String,
     pub tags: Vec<String>,
     pub created_at: i64,
+    /// Last change to the content (title, body, tags).
     pub updated_at: i64,
     pub trashed_at: Option<i64>,
+    /// When the note was put on the Later list; `None` = not on it.
+    pub later_at: Option<i64>,
+    /// Optional due date for a Later note, `YYYY-MM-DD`.
+    pub due_date: Option<String>,
+}
+
+/// A note on the Later list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LaterItem {
+    pub id: ObjectId,
+    pub parent_id: Option<ObjectId>,
+    pub title: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub due_date: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -424,8 +444,8 @@ impl Store {
         object_kind(&tx, id)?;
         let sort_key = place(&tx, placement, Some(id))?;
         tx.execute(
-            "UPDATE objects SET parent_id = ?2, sort_key = ?3, updated_at = ?4 WHERE id = ?1",
-            params![id, placement.parent, sort_key, now],
+            "UPDATE objects SET parent_id = ?2, sort_key = ?3 WHERE id = ?1",
+            params![id, placement.parent, sort_key],
         )?;
         enqueue(&tx, id, now)?;
         tx.commit()?;
@@ -438,7 +458,7 @@ impl Store {
         let tx = self.conn.transaction()?;
         object_kind(&tx, id)?;
         let changed = tx.execute(
-            "UPDATE objects SET trashed_at = ?2, updated_at = ?2 WHERE id = ?1 AND trashed_at IS NULL",
+            "UPDATE objects SET trashed_at = ?2 WHERE id = ?1 AND trashed_at IS NULL",
             params![id, now],
         )?;
         if changed > 0 {
@@ -473,16 +493,12 @@ impl Store {
             }
         };
         if parent_ok {
-            tx.execute(
-                "UPDATE objects SET trashed_at = NULL, updated_at = ?2 WHERE id = ?1",
-                params![id, now],
-            )?;
+            tx.execute("UPDATE objects SET trashed_at = NULL WHERE id = ?1", [id])?;
         } else {
             let sort_key = place(&tx, Placement::last_in(None), Some(id))?;
             tx.execute(
-                "UPDATE objects SET trashed_at = NULL, parent_id = NULL, sort_key = ?2, updated_at = ?3
-                 WHERE id = ?1",
-                params![id, sort_key, now],
+                "UPDATE objects SET trashed_at = NULL, parent_id = NULL, sort_key = ?2 WHERE id = ?1",
+                params![id, sort_key],
             )?;
         }
         enqueue(&tx, id, now)?;
@@ -544,7 +560,7 @@ impl Store {
             .conn
             .prepare_cached(
                 "SELECT o.id, o.parent_id, o.title, coalesce(b.body, ''), o.tags,
-                        o.created_at, o.updated_at, o.trashed_at, o.kind
+                        o.created_at, o.updated_at, o.trashed_at, o.kind, o.later_at, o.due_date
                  FROM objects o LEFT JOIN note_bodies b ON b.seq = o.seq
                  WHERE o.id = ?1",
             )?
@@ -559,6 +575,8 @@ impl Store {
                         created_at: r.get(5)?,
                         updated_at: r.get(6)?,
                         trashed_at: r.get(7)?,
+                        later_at: r.get(9)?,
+                        due_date: r.get(10)?,
                     },
                     Kind::from_code(r.get(8)?)?,
                 ))
@@ -622,6 +640,53 @@ impl Store {
         enqueue(&tx, id, now)?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Puts a note on the Later list (with an optional due date, `YYYY-MM-DD`)
+    /// or takes it off (`later = false`, which also clears the due date).
+    pub fn set_later(&mut self, id: &ObjectId, later: bool, due_date: Option<&str>) -> Result<()> {
+        let old = self.note(id)?;
+        let due_date = match (later, due_date) {
+            (true, Some(d)) => Some(valid_date(d)?),
+            _ => None,
+        };
+        if old.later_at.is_some() == later && old.due_date == due_date {
+            return Ok(());
+        }
+        let now = self.now();
+        // Keep the original "marked at" time when only the due date changes.
+        let later_at = later.then(|| old.later_at.unwrap_or(now));
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "UPDATE objects SET later_at = ?2, due_date = ?3 WHERE id = ?1",
+            params![id, later_at, due_date],
+        )?;
+        enqueue(&tx, id, now)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Notes on the Later list (not in the trash): those with a due date
+    /// first, soonest first; then by creation time, newest first.
+    pub fn later_notes(&self) -> Result<Vec<LaterItem>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "{HIDDEN_CTE}
+             SELECT id, parent_id, title, created_at, updated_at, due_date FROM objects
+             WHERE later_at IS NOT NULL AND kind = 2 AND id NOT IN hidden
+             ORDER BY due_date IS NULL, due_date, created_at DESC, id"
+        ))?;
+        Ok(stmt
+            .query_map([], |r| {
+                Ok(LaterItem {
+                    id: r.get(0)?,
+                    parent_id: r.get(1)?,
+                    title: r.get(2)?,
+                    created_at: r.get(3)?,
+                    updated_at: r.get(4)?,
+                    due_date: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?)
     }
 
     /// Earlier versions of a note, newest first.
@@ -712,6 +777,35 @@ fn folder_name(name: &str) -> Result<String> {
         return Err(StoreError::EmptyName);
     }
     Ok(name.to_owned())
+}
+
+/// Accepts a real calendar date written as `YYYY-MM-DD` (so dates sort as text).
+fn valid_date(date: &str) -> Result<String> {
+    let invalid = || StoreError::InvalidDate(date.to_owned());
+    let parts: Vec<&str> = date.split('-').collect();
+    let [y, m, d] = parts[..] else {
+        return Err(invalid());
+    };
+    if y.len() != 4 || m.len() != 2 || d.len() != 2 {
+        return Err(invalid());
+    }
+    let (y, m, d): (u32, u32, u32) = (
+        y.parse().map_err(|_| invalid())?,
+        m.parse().map_err(|_| invalid())?,
+        d.parse().map_err(|_| invalid())?,
+    );
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let days = match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return Err(invalid()),
+    };
+    if !(1..=days).contains(&d) {
+        return Err(invalid());
+    }
+    Ok(date.to_owned())
 }
 
 fn parse_tags(json: &str) -> Vec<String> {

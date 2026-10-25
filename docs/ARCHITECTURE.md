@@ -177,6 +177,15 @@ version is 10 minutes older (a checkpoint during long continuous editing).
 Autosaves in between are not kept; at most 50 versions per note. Saving
 unchanged content is a no-op, so it never creates sync traffic.
 
+**Edited time** (`updated_at`): the last change to a note's *content*
+(title, body, tags). Moving, trashing/restoring and the Later flag don't
+change it; they are still queued for sync, which tracks them separately (M6).
+
+**Later list**: a note can be marked "Later" (`later_at`) with an optional
+due date (`due_date`, a calendar date `YYYY-MM-DD`, no time zone). The Later
+tab lists such notes, dated ones first (soonest first), then by creation
+time, newest first (same order within one due date).
+
 **Order of siblings**: fractional-index sort keys
 (`crates/memoir-core/src/store/sort_key.rs`), so a move or reorder changes a
 single object.

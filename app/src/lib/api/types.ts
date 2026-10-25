@@ -25,8 +25,22 @@ export interface Note {
   body: string
   tags: string[]
   created_at: number
+  /** Last change to the content (title, body, tags). */
   updated_at: number
   trashed_at: number | null
+  /** When the note was put on the Later list; null = not on it. */
+  later_at: number | null
+  /** Due date for a Later note, YYYY-MM-DD. */
+  due_date: string | null
+}
+
+export interface LaterItem {
+  id: Id
+  parent_id: Id | null
+  title: string
+  created_at: number
+  updated_at: number
+  due_date: string | null
 }
 
 /** Matches in `snippet` are wrapped in MATCH_START / MATCH_END. */
@@ -76,4 +90,8 @@ export interface Api {
   note(id: Id): Promise<Note>
   saveNote(id: Id, title: string, body: string): Promise<void>
   search(query: string, limit: number): Promise<SearchHit[]>
+  /** Puts a note on the Later list or takes it off (which clears the due date). */
+  setLater(id: Id, later: boolean, dueDate: string | null): Promise<void>
+  /** Later notes: dated first (soonest first), then by creation, newest first. */
+  laterNotes(): Promise<LaterItem[]>
 }

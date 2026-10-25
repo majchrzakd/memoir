@@ -1,8 +1,10 @@
 <script lang="ts">
   import { Editor } from '@tiptap/core'
   import { onMount } from 'svelte'
-  import { api, type Id } from '../api'
+  import { api, type Id, type Note } from '../api'
   import { app } from '../app.svelte'
+  import { fullTime, sinceTime } from '../time'
+  import Icon from '../ui/Icon.svelte'
   import { editorExtensions } from './extensions'
   import Toolbar from './Toolbar.svelte'
   import './prose.css'
@@ -15,9 +17,13 @@
   let titleInput = $state<HTMLInputElement>()
   let editor = $state.raw<Editor | null>(null)
   let title = $state('')
+  /** Dates and Later state of the open note. */
+  let meta = $state<Pick<Note, 'created_at' | 'updated_at' | 'later_at' | 'due_date'> | null>(null)
   let status = $state<'saved' | 'unsaved' | 'saving' | 'error'>('saved')
   /** Bumped on every editor transaction so the toolbar re-reads its state. */
   let tick = $state(0)
+  /** Current time, refreshed so "Edited 5 min ago" stays true. */
+  let now = $state(Date.now())
   let loadError = $state<string | null>(null)
 
   let loadedId: Id | null = null
@@ -45,7 +51,9 @@
       status = 'saving'
       try {
         await api.saveNote(id, savedTitle, body)
-        app.titleSaved(id, savedTitle)
+        const savedAt = Date.now()
+        if (meta && id === loadedId) meta.updated_at = savedAt
+        app.noteSaved(id, savedTitle, savedAt)
         if (!dirty) status = 'saved'
       } catch (e) {
         dirty = true
@@ -66,6 +74,12 @@
       editor?.destroy()
       loadError = null
       title = note.title
+      meta = {
+        created_at: note.created_at,
+        updated_at: note.updated_at,
+        later_at: note.later_at,
+        due_date: note.due_date,
+      }
       loadedId = id
       status = 'saved'
       editor = new Editor({
@@ -83,13 +97,46 @@
     }
   }
 
+  async function setLater(later: boolean, dueDate: string | null) {
+    if (!loadedId || !meta) return
+    const id = loadedId
+    try {
+      await api.setLater(id, later, later ? dueDate : null)
+      if (id !== loadedId) return
+      meta.later_at = later ? (meta.later_at ?? Date.now()) : null
+      meta.due_date = later ? dueDate : null
+      app.laterChanged()
+    } catch (e) {
+      app.fail(e)
+    }
+  }
+
+  /** Clicking empty space in the page puts the cursor in the text: on the
+   * line level with the click, or at the end when clicking below the text. */
+  function focusFromClick(e: MouseEvent) {
+    const target = e.target as HTMLElement
+    if (!editor || target.closest('.ProseMirror, input, button, .meta')) return
+    e.preventDefault()
+    const view = editor.view
+    const rect = view.dom.getBoundingClientRect()
+    let pos = view.state.doc.content.size
+    if (e.clientY <= rect.bottom) {
+      const left = Math.min(Math.max(e.clientX, rect.left + 1), rect.right - 1)
+      pos = view.posAtCoords({ left, top: Math.max(e.clientY, rect.top + 1) })?.pos ?? pos
+    }
+    editor.commands.setTextSelection(pos)
+    view.focus()
+  }
+
   $effect(() => {
     void load(noteId)
   })
 
   onMount(() => {
     app.flushEditor = flush
+    const clock = setInterval(() => (now = Date.now()), 30_000)
     return () => {
+      clearInterval(clock)
       if (app.flushEditor === flush) app.flushEditor = async () => {}
       const closing = editor
       void flush().then(() => closing?.destroy())
@@ -105,7 +152,9 @@
   {#if editor}
     <Toolbar {editor} {tick} />
   {/if}
-  <div class="scroll">
+  <!-- Mouse-only convenience; keyboard users reach the text with Tab / Enter. -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="scroll" onmousedown={focusFromClick}>
     <div class="page">
       {#if loadError}
         <p class="error">{loadError}</p>
@@ -127,6 +176,34 @@
           }
         }}
       />
+      {#if meta}
+        <div class="meta">
+          <span title={fullTime(meta.created_at)}>Created {fullTime(meta.created_at)}</span>
+          <span aria-hidden="true">·</span>
+          <span title={fullTime(meta.updated_at)}>Edited {sinceTime(meta.updated_at, now)}</span>
+          <span class="spacer"></span>
+          <button
+            class="later"
+            class:on={meta.later_at !== null}
+            aria-pressed={meta.later_at !== null}
+            title={meta.later_at !== null ? 'Remove from Later' : 'Add to Later'}
+            onclick={() => setLater(meta?.later_at === null, meta?.due_date ?? null)}
+          >
+            <Icon name="clock" size={14} />
+            Later
+          </button>
+          {#if meta.later_at !== null}
+            <input
+              class="due"
+              type="date"
+              aria-label="Due date"
+              title="Due date (optional)"
+              value={meta.due_date ?? ''}
+              onchange={(e) => setLater(true, e.currentTarget.value || null)}
+            />
+          {/if}
+        </div>
+      {/if}
       <div class="body" bind:this={host}></div>
     </div>
   </div>
@@ -144,17 +221,19 @@
   .scroll {
     flex: 1;
     overflow-y: auto;
+    cursor: text;
   }
 
   .page {
     max-width: 760px;
+    min-height: 100%;
     margin: 0 auto;
     padding: 28px 40px 120px;
   }
 
   .title {
     width: 100%;
-    padding: 0 0 12px;
+    padding: 0 0 6px;
     border: none;
     background: none;
     font-size: 28px;
@@ -167,9 +246,44 @@
     opacity: 0.6;
   }
 
-  .body {
-    min-height: 60vh;
-    cursor: text;
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    margin-bottom: 18px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: default;
+  }
+
+  .spacer {
+    flex: 1;
+  }
+
+  .later {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .later.on {
+    border-color: var(--accent);
+    background: var(--bg-selected);
+    color: var(--text);
+  }
+
+  .due {
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
   }
 
   footer {

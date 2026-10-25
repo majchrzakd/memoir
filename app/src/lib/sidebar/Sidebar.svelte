@@ -1,7 +1,21 @@
 <script lang="ts">
+  import { api, type LaterItem } from '../api'
   import { app } from '../app.svelte'
   import Icon from '../ui/Icon.svelte'
+  import LaterList from './LaterList.svelte'
   import Tree from './Tree.svelte'
+
+  let later = $state.raw<LaterItem[]>([])
+
+  // Reload when notes change (titles, trash) or Later flags change.
+  $effect(() => {
+    void app.items
+    void app.laterVersion
+    api
+      .laterNotes()
+      .then((list) => (later = list))
+      .catch((e) => app.fail(e))
+  })
 </script>
 
 <nav class="sidebar" aria-label="Notebook">
@@ -21,7 +35,29 @@
     <kbd>Ctrl+K</kbd>
   </button>
 
-  <Tree />
+  <div class="tabs" role="tablist" aria-label="Sidebar">
+    <button
+      role="tab"
+      aria-selected={app.sidebarTab === 'notes'}
+      onclick={() => (app.sidebarTab = 'notes')}
+    >
+      Notes
+    </button>
+    <button
+      role="tab"
+      aria-selected={app.sidebarTab === 'later'}
+      onclick={() => (app.sidebarTab = 'later')}
+    >
+      Later
+      {#if later.length}<span class="count">{later.length}</span>{/if}
+    </button>
+  </div>
+
+  {#if app.sidebarTab === 'notes'}
+    <Tree />
+  {:else}
+    <LaterList items={later} />
+  {/if}
 
   <footer>
     <button class="trash" class:active={app.view === 'trash'} onclick={() => (app.view = 'trash')}>
@@ -32,7 +68,49 @@
 </nav>
 
 <style>
+  .tabs {
+    display: flex;
+    gap: 2px;
+    margin: 0 10px 6px;
+    padding: 2px;
+    border-radius: 7px;
+    background: var(--bg-hover);
+  }
+
+  .tabs button {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border: none;
+    border-radius: 5px;
+    background: none;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  .tabs button[aria-selected='true'] {
+    background: var(--bg-raised);
+    color: var(--text);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.15);
+  }
+
+  .count {
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
+  }
+
   .sidebar {
+    /* Lets the tree hide edit times when the sidebar is narrow. */
+    container-type: inline-size;
     display: flex;
     flex-direction: column;
     min-width: 0;

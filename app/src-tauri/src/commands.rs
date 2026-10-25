@@ -4,7 +4,9 @@
 
 use std::sync::{Mutex, MutexGuard};
 
-use memoir_core::store::{Note, ObjectId, Placement, SearchHit, Store, StoreError, TreeItem};
+use memoir_core::store::{
+    LaterItem, Note, ObjectId, Placement, SearchHit, Store, StoreError, TreeItem,
+};
 use tauri::State;
 use tokio::sync::Notify;
 
@@ -164,4 +166,19 @@ pub fn search(
     limit: usize,
 ) -> CmdResult<Vec<SearchHit>> {
     state.with_store(|s| s.search(&query, limit.min(200)))
+}
+
+#[tauri::command(async)]
+pub fn set_later(
+    state: State<'_, AppState>,
+    id: ObjectId,
+    later: bool,
+    due_date: Option<String>,
+) -> CmdResult<()> {
+    state.with_store(|s| s.set_later(&id, later, due_date.as_deref()))
+}
+
+#[tauri::command(async)]
+pub fn later_notes(state: State<'_, AppState>) -> CmdResult<Vec<LaterItem>> {
+    state.with_store(|s| s.later_notes())
 }

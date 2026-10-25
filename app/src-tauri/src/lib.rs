@@ -54,6 +54,8 @@ pub fn run() {
             commands::note,
             commands::save_note,
             commands::search,
+            commands::set_later,
+            commands::later_notes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Memoir");

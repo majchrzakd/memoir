@@ -33,4 +33,6 @@ export const tauriApi: Api = {
   note: (id) => invoke('note', { id }),
   saveNote: (id, title, body) => invoke('save_note', { id, title, body }),
   search: (query, limit) => invoke('search', { query, limit }),
+  setLater: (id, later, dueDate) => invoke('set_later', { id, later, dueDate }),
+  laterNotes: () => invoke('later_notes'),
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Id, Placement } from '../api'
   import { app } from '../app.svelte'
+  import { fullTime, shortTime } from '../time'
   import { displayTitle, dropTarget, type DropZone, type Row } from '../tree'
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte'
   import Icon from '../ui/Icon.svelte'
@@ -274,6 +275,11 @@
             />
           {:else}
             <span class="title" class:untitled={!item.title.trim()}>{displayTitle(item)}</span>
+            {#if item.kind === 'note'}
+              <span class="time" title="Edited {fullTime(item.updated_at)}">
+                {shortTime(item.updated_at)}
+              </span>
+            {/if}
           {/if}
         </div>
       {/each}
@@ -371,8 +377,23 @@
   }
 
   .title {
+    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .time {
+    flex: none;
+    margin-left: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  /* Not enough room next to titles in a narrow sidebar. */
+  @container (max-width: 230px) {
+    .time {
+      display: none;
+    }
   }
 
   .untitled {
