@@ -280,7 +280,7 @@
     </div>
   </div>
   {#if app.rows.length === 0}
-    <p class="empty muted">No notes yet. Press Ctrl+N to create one.</p>
+    <p class="no-notes muted">No notes yet. Press Ctrl+N to create one.</p>
   {/if}
 </div>
 
@@ -384,6 +384,8 @@
   .chevron-space {
     flex: none;
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 16px;
     height: 16px;
     padding: 0;
@@ -408,7 +410,7 @@
     padding: 0 6px !important;
   }
 
-  .empty {
+  .no-notes {
     padding: 8px 16px;
     font-size: 13px;
   }
