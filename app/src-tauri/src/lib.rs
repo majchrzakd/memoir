@@ -1,3 +1,4 @@
+mod attachments;
 mod commands;
 mod session;
 mod shutdown;
@@ -17,8 +18,24 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .register_asynchronous_uri_scheme_protocol(
+            attachments::SCHEME,
+            |ctx, request, responder| {
+                let app = ctx.app_handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    responder.respond(attachments::serve(&app, &request));
+                });
+            },
+        )
         .setup(|app| {
-            let dir = app.path().app_local_data_dir()?;
+            // Development builds can use a separate data folder (tests, demos)
+            // so they never touch the real notebook.
+            let dir = match std::env::var_os("MEMOIR_DATA_DIR") {
+                Some(dir) if cfg!(debug_assertions) => std::path::PathBuf::from(dir),
+                _ => app.path().app_local_data_dir()?,
+            };
             let keychain = OsKeychain::new(app.config().identifier.clone());
             let session = Session::open(dir, Box::new(keychain));
             log::info!("session opened: {:?}", session.status());
@@ -60,6 +77,9 @@ pub fn run() {
             commands::add_reply,
             commands::save_reply,
             commands::delete_reply,
+            attachments::add_attachment,
+            attachments::open_attachment,
+            attachments::save_attachment,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Memoir");

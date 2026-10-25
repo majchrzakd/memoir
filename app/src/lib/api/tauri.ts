@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { Api } from './types'
 
@@ -39,4 +39,14 @@ export const tauriApi: Api = {
   addReply: (noteId, body) => invoke('add_reply', { noteId, body }),
   saveReply: (id, body) => invoke('save_reply', { id, body }),
   deleteReply: (id) => invoke('delete_reply', { id }),
+
+  // The file goes over IPC as raw bytes, not JSON.
+  addAttachment: async (file) =>
+    invoke('add_attachment', new Uint8Array(await file.arrayBuffer()), {
+      headers: { 'x-mime': file.type || 'application/octet-stream' },
+    }),
+  // Served by the `attachment` URI scheme (app/src-tauri/src/attachments.rs).
+  attachmentUrl: (id) => convertFileSrc(id, 'attachment'),
+  openAttachment: (id, name) => invoke('open_attachment', { id, name }),
+  saveAttachment: (id, name) => invoke('save_attachment', { id, name }),
 }

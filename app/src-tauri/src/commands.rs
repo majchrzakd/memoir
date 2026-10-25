@@ -21,7 +21,7 @@ pub struct AppState {
 type CmdResult<T> = Result<T, String>;
 
 impl AppState {
-    fn session(&self) -> CmdResult<MutexGuard<'_, Session>> {
+    pub(crate) fn session(&self) -> CmdResult<MutexGuard<'_, Session>> {
         self.session
             .lock()
             .map_err(|_| "internal error: session lock poisoned".to_string())

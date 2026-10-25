@@ -4,6 +4,7 @@
   import { onMount } from 'svelte'
   import type { Id } from '../api'
   import { app } from '../app.svelte'
+  import { attachmentActions } from './attachmentActions'
   import { editorExtensions } from './extensions'
 
   let { noteId, onsubmit }: { noteId: Id; onsubmit: (body: string) => Promise<void> } = $props()
@@ -17,7 +18,7 @@
     editor = new Editor({
       element: host,
       extensions: [
-        ...editorExtensions(),
+        ...editorExtensions(app.editorOptions()),
         Placeholder.configure({ placeholder: 'Reply…' }),
         Extension.create({
           name: 'sendShortcut',
@@ -59,7 +60,12 @@
 
 <div class="composer">
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="input" bind:this={host} onclick={() => editor?.commands.focus()}></div>
+  <div
+    class="input"
+    bind:this={host}
+    use:attachmentActions
+    onclick={() => editor?.commands.focus()}
+  ></div>
   <div class="actions">
     <span class="hint">Ctrl+Enter to send</span>
     <button class="primary" disabled={empty || busy} onclick={submit}>Reply</button>

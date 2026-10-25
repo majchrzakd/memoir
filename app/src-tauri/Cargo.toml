@@ -26,6 +26,8 @@ tokio = { version = "1", features = ["sync", "time"] }
 memoir-core = { version = "0.1.0", path = "../../crates/memoir-core" }
 thiserror = "2.0.21"
 zeroize = "1.9.1"
+tauri-plugin-opener = "2.7.2"
+tauri-plugin-dialog = "2.8.3"
 
 [dev-dependencies]
 tempfile = "3.27.0"

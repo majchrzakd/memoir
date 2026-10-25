@@ -207,6 +207,15 @@ pub struct SearchHit {
     pub reply_id: Option<ObjectId>,
 }
 
+/// An attachment (see `crate::blobs`), referenced from Markdown as
+/// `attachment:<id>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BlobMeta {
+    pub id: String,
+    pub size: u64,
+    pub mime: String,
+}
+
 /// A reply in a note's thread: a note without a title whose parent is a
 /// note. Replies don't appear in the tree and have no replies of their own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -850,6 +859,35 @@ impl Store {
         purge_subtree(&tx, id, now)?;
         tx.commit()?;
         Ok(())
+    }
+
+    // ---- Attachments --------------------------------------------------
+
+    /// Records an attachment stored in the blob store (once per content).
+    pub fn record_blob(&mut self, id: &str, size: u64, mime: &str) -> Result<()> {
+        let now = self.now();
+        self.conn.execute(
+            "INSERT OR IGNORE INTO blobs (id, size, mime, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![id, size as i64, mime, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn blob(&self, id: &str) -> Result<Option<BlobMeta>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, size, mime FROM blobs WHERE id = ?1",
+                [id],
+                |r| {
+                    Ok(BlobMeta {
+                        id: r.get(0)?,
+                        size: r.get::<_, i64>(1)? as u64,
+                        mime: r.get(2)?,
+                    })
+                },
+            )
+            .optional()?)
     }
 
     /// Number of local changes not yet pushed to the cloud.

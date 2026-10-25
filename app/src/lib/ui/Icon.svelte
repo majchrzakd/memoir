@@ -19,6 +19,7 @@
     check: 'm5 12 5 5L20 7',
     clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2',
     edit: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4',
+    paperclip: 'm21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7',
     thread: 'M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z',
   } as const
   export type IconName = keyof typeof PATHS

@@ -3,6 +3,7 @@
 
 import { SvelteSet } from 'svelte/reactivity'
 import { api, type Id, type Placement, type Status, type TreeItem } from './api'
+import type { EditorOptions } from './editor/extensions'
 import { ancestorIds, childrenMap, visibleRows } from './tree'
 
 type Screen = 'loading' | Status
@@ -164,6 +165,29 @@ class App {
   noteSaved(id: Id, title: string, updatedAt: number) {
     this.items = this.items.map((i) => (i.id === id ? { ...i, title, updated_at: updatedAt } : i))
     this.laterChanged()
+  }
+
+  // ---- Attachments ---------------------------------------------------------
+
+  /** Right-click menu for an attachment in a note. */
+  attachmentMenu = $state<{ x: number; y: number; id: string; name: string } | null>(null)
+
+  /** Editor options shared by notes, replies and the reply box. */
+  editorOptions(): EditorOptions {
+    return {
+      attachmentUrl: (id) => api.attachmentUrl(id),
+      upload: { upload: (file) => api.addAttachment(file), onError: (e) => this.fail(e) },
+    }
+  }
+
+  async openAttachment(id: string, name: string) {
+    await this.run(() => api.openAttachment(id, name))
+  }
+
+  async saveAttachment(id: string, name: string) {
+    await this.run(async () => {
+      await api.saveAttachment(id, name)
+    })
   }
 
   /** Updates a note's reply count in the tree. */

@@ -8,6 +8,7 @@
 import {
   MATCH_END,
   MATCH_START,
+  MAX_ATTACHMENT_SIZE,
   type Api,
   type Id,
   type Kind,
@@ -36,6 +37,8 @@ const MOCK_PASSPHRASE = 'correct horse'
 
 export function createMockApi(): Api {
   const objects = new Map<Id, Obj>()
+  // Attachment id → object URL of the file.
+  const attachments = new Map<string, string>()
   let seq = 0
   const newId = () => `MOCK${String(++seq).padStart(22, '0')}`
   const now = () => Date.now()
@@ -413,6 +416,27 @@ export function createMockApi(): Api {
     async deleteReply(id) {
       if (!isReply(get(id))) throw `${id} is not a reply`
       objects.delete(id)
+    },
+
+    async addAttachment(file) {
+      if (file.size > MAX_ATTACHMENT_SIZE) throw 'the file is too large'
+      const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+      const id = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+      if (!attachments.has(id)) attachments.set(id, URL.createObjectURL(file))
+      return { id, size: file.size, mime: file.type || 'application/octet-stream' }
+    },
+    attachmentUrl(id) {
+      return attachments.get(id) ?? ''
+    },
+    async openAttachment(id) {
+      window.open(attachments.get(id), '_blank')
+    },
+    async saveAttachment(id, name) {
+      const a = document.createElement('a')
+      a.href = attachments.get(id) ?? ''
+      a.download = name
+      a.click()
+      return true
     },
   }
   return api

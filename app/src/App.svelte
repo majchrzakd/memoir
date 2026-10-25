@@ -6,6 +6,7 @@
   import Setup from './lib/screens/Setup.svelte'
   import Unlock from './lib/screens/Unlock.svelte'
   import ConfirmDialog from './lib/ui/ConfirmDialog.svelte'
+  import ContextMenu from './lib/ui/ContextMenu.svelte'
 
   onMount(() => {
     void app.start()
@@ -24,6 +25,23 @@
 {/if}
 
 <ConfirmDialog />
+
+{#if app.attachmentMenu}
+  {@const target = app.attachmentMenu}
+  <ContextMenu
+    x={target.x}
+    y={target.y}
+    items={[
+      {
+        label: 'Open',
+        shortcut: 'Double-click',
+        action: () => app.openAttachment(target.id, target.name),
+      },
+      { label: 'Save as…', action: () => app.saveAttachment(target.id, target.name) },
+    ]}
+    onclose={() => (app.attachmentMenu = null)}
+  />
+{/if}
 
 {#if app.error}
   <div class="toast" role="alert">

@@ -1,7 +1,19 @@
 <script lang="ts">
   import type { ChainedCommands, Editor } from '@tiptap/core'
+  import { app } from '../app.svelte'
+  import Icon from '../ui/Icon.svelte'
+  import { insertAttachments } from './attachments'
 
   let { editor, tick }: { editor: Editor; tick: number } = $props()
+
+  let fileInput = $state<HTMLInputElement>()
+
+  function attach(input: HTMLInputElement) {
+    const files = [...(input.files ?? [])]
+    input.value = ''
+    const upload = app.editorOptions().upload
+    if (files.length && upload) void insertAttachments(editor, files, upload)
+  }
 
   interface Tool {
     label: string
@@ -117,7 +129,7 @@
     ],
   ]
 
-  const state = $derived.by(() => {
+  const toolState = $derived.by(() => {
     void tick
     return groups.map((g) =>
       g.map((tool) => ({
@@ -134,11 +146,11 @@
       {#each group as tool, t (tool.title)}
         <button
           class="tool"
-          class:active={state[g][t].active}
+          class:active={toolState[g][t].active}
           title={tool.title}
           aria-label={tool.title}
-          aria-pressed={tool.active ? state[g][t].active : undefined}
-          disabled={!state[g][t].enabled}
+          aria-pressed={tool.active ? toolState[g][t].active : undefined}
+          disabled={!toolState[g][t].enabled}
           style={tool.style}
           onmousedown={(e) => e.preventDefault()}
           onclick={() => tool.run(editor.chain().focus()).run()}
@@ -148,6 +160,24 @@
       {/each}
     </div>
   {/each}
+  <div class="group">
+    <button
+      class="tool"
+      title="Attach a file or image (or paste / drop it into the note)"
+      aria-label="Attach a file or image"
+      onmousedown={(e) => e.preventDefault()}
+      onclick={() => fileInput?.click()}
+    >
+      <Icon name="paperclip" />
+    </button>
+    <input
+      type="file"
+      multiple
+      hidden
+      bind:this={fileInput}
+      onchange={(e) => attach(e.currentTarget)}
+    />
+  </div>
 </div>
 
 <style>

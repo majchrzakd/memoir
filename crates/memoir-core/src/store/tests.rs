@@ -667,3 +667,22 @@ fn search_finds_replies_and_points_at_their_note() {
     s.purge(&note).unwrap();
     assert!(matches!(s.note(&reply), Err(StoreError::NotFound(_))));
 }
+
+#[test]
+fn attachment_metadata_is_recorded_once() {
+    let mut f = fixture();
+    let id = "ab".repeat(32);
+    assert_eq!(f.store.blob(&id).unwrap(), None);
+    f.store.record_blob(&id, 1234, "image/png").unwrap();
+    f.store
+        .record_blob(&id, 1234, "application/octet-stream")
+        .unwrap();
+    assert_eq!(
+        f.store.blob(&id).unwrap(),
+        Some(BlobMeta {
+            id: id.clone(),
+            size: 1234,
+            mime: "image/png".into()
+        })
+    );
+}

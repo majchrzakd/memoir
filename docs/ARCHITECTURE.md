@@ -197,6 +197,20 @@ The UI shows the thread below the note or in a side column (a switch,
 remembered per device; side needs a wide window). Unsent reply drafts live
 in memory only.
 
+**Attachments** (M4): pasted, dropped or attached files are encrypted into
+`blobs/<id>.mmr` in the app's data folder (blob stream format; the id is a
+keyed HMAC of the content, so identical files are stored once and the id is
+bound into the encryption). The `blobs` table keeps size, type and — for
+sync — whether a blob is uploaded. Notes refer to them in Markdown:
+`![name](attachment:<id>)` for images, `[name](attachment:<id>)` for other
+files (shown as chips). Images are served to the webview by the `attachment`
+URI scheme (`http://attachment.localhost/<id>` on Windows), decrypted in
+memory per request with `Cache-Control: no-store`, so the webview's disk cache
+never holds plaintext; only `image/*` attachments are served. Opening a file
+in another program writes a decrypted copy to `opened/`, which is emptied on
+every start and exit; "Save as…" writes where the user chooses. Limit: 100 MB
+per file. Unreferenced attachments are not yet cleaned up (M6, with sync).
+
 **Order of siblings**: fractional-index sort keys
 (`crates/memoir-core/src/store/sort_key.rs`), so a move or reorder changes a
 single object.

@@ -5,6 +5,7 @@
   import { app } from '../app.svelte'
   import { fullTime, shortTime } from '../time'
   import Icon from '../ui/Icon.svelte'
+  import { attachmentActions } from './attachmentActions'
   import { editorExtensions } from './extensions'
 
   let {
@@ -29,7 +30,7 @@
   onMount(() => {
     editor = new Editor({
       element: host,
-      extensions: editorExtensions(),
+      extensions: editorExtensions(app.editorOptions()),
       content: reply.body,
       contentType: 'markdown',
       editable: false,
@@ -103,6 +104,7 @@
   <div
     class="text"
     bind:this={host}
+    use:attachmentActions
     ondblclick={startEditing}
     onkeydown={(e) => {
       if (editing && e.key === 'Escape') {

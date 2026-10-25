@@ -54,6 +54,10 @@ pub fn on_close_requested<R: Runtime>(window: &Window<R>) {
                 "shutdown: sync timed out after {SYNC_FLUSH_TIMEOUT:?}; remaining changes stay queued"
             ),
         }
+        // Decrypted copies of attachments opened in other programs.
+        if let Ok(session) = state.session.lock() {
+            session.clear_opened_files();
+        }
         app.exit(0);
     });
 }

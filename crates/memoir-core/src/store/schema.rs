@@ -69,6 +69,17 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE objects ADD COLUMN due_date TEXT;
     CREATE INDEX objects_later ON objects (later_at) WHERE later_at IS NOT NULL;
     "#,
+    // 3: attachments. The encrypted files live in the blob store; this keeps
+    // what the UI needs to show them and, for sync, whether they're uploaded.
+    r#"
+    CREATE TABLE blobs (
+        id           TEXT PRIMARY KEY,
+        size         INTEGER NOT NULL,
+        mime         TEXT NOT NULL,
+        created_at   INTEGER NOT NULL,
+        uploaded_at  INTEGER
+    );
+    "#,
 ];
 
 pub fn migrate(conn: &mut Connection) -> Result<(), StoreError> {

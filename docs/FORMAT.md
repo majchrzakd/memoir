@@ -119,6 +119,10 @@ offset  size  field
 **Blob id** (the attachment's name) = lowercase hex of
 HMAC-SHA256(blob-id key, plaintext).
 
+**Context** for attachments = `"blob:" || blob id` (ASCII). Locally they are
+stored as `blobs/<blob id>.mmr`. Notes reference them in Markdown as
+`attachment:<blob id>`.
+
 ## Local database
 
 SQLCipher 4 database keyed with the raw local database key

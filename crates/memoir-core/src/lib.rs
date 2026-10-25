@@ -3,6 +3,7 @@
 //! Remaining modules (sync, export) arrive in M6–M7; see
 //! `docs/IMPLEMENTATION_PLAN.md`.
 
+pub mod blobs;
 pub mod crypto;
 pub mod db;
 pub mod keystore;

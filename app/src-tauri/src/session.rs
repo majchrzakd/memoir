@@ -12,7 +12,8 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use memoir_core::crypto::RecoveryKey;
+use memoir_core::blobs::{BlobError, BlobStore};
+use memoir_core::crypto::{Keyring, RecoveryKey};
 use memoir_core::keystore::{SecretStore, local_db_account};
 use memoir_core::store::{Store, StoreError};
 use memoir_core::vault::{self, KdfParams, NewVault, UnlockedVault, VaultError, VaultFile};
@@ -21,6 +22,11 @@ use zeroize::Zeroizing;
 
 const VAULT_FILE: &str = "vault.json";
 const DB_FILE: &str = "memoir.db";
+/// Encrypted attachments.
+const BLOBS_DIR: &str = "blobs";
+/// Decrypted copies of attachments opened in other programs; emptied on
+/// every start and exit.
+const OPENED_DIR: &str = "opened";
 /// Trash older than this is deleted for good when the app opens.
 const TRASH_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
@@ -43,6 +49,8 @@ pub enum SessionError {
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error(transparent)]
+    Blob(#[from] BlobError),
+    #[error(transparent)]
     RecoveryKey(#[from] memoir_core::crypto::recovery::RecoveryKeyError),
     #[error("could not access app data: {0}")]
     Io(#[from] std::io::Error),
@@ -60,6 +68,7 @@ pub struct Session {
     kdf: KdfParams,
     pending: Option<NewVault>,
     store: Option<Store>,
+    blobs: Option<BlobStore>,
 }
 
 impl Session {
@@ -75,7 +84,9 @@ impl Session {
             kdf,
             pending: None,
             store: None,
+            blobs: None,
         };
+        session.clear_opened_files();
         if let Err(e) = session.try_auto_unlock() {
             log::warn!("automatic unlock failed: {e}");
         }
@@ -96,6 +107,29 @@ impl Session {
 
     pub fn store(&mut self) -> Result<&mut Store> {
         self.store.as_mut().ok_or(SessionError::Locked)
+    }
+
+    /// The database and the attachment files, both needed to add or read one.
+    pub fn attachments(&mut self) -> Result<(&mut Store, &BlobStore)> {
+        match (self.store.as_mut(), self.blobs.as_ref()) {
+            (Some(store), Some(blobs)) => Ok((store, blobs)),
+            _ => Err(SessionError::Locked),
+        }
+    }
+
+    /// Where decrypted copies go when an attachment is opened in another program.
+    pub fn opened_dir(&self) -> PathBuf {
+        self.dir.join(OPENED_DIR)
+    }
+
+    /// Deletes decrypted copies of opened attachments.
+    pub fn clear_opened_files(&self) {
+        let dir = self.opened_dir();
+        if dir.exists()
+            && let Err(e) = fs::remove_dir_all(&dir)
+        {
+            log::warn!("could not remove opened attachments: {e}");
+        }
     }
 
     /// First step of setup: creates the vault in memory and returns the
@@ -128,14 +162,15 @@ impl Session {
         let store = self.open_store(&new.file, &new.vault, true)?;
         // Written last: its presence marks setup as complete.
         write_atomically(&self.vault_path(), new.file.to_json().as_bytes())?;
-        self.store = Some(store);
+        self.opened(store, new.vault.keys())?;
         Ok(())
     }
 
     pub fn unlock(&mut self, passphrase: &str, remember: bool) -> Result<()> {
         let file = self.read_vault_file()?;
         let vault = file.unlock(passphrase)?;
-        self.store = Some(self.open_store(&file, &vault, remember)?);
+        let store = self.open_store(&file, &vault, remember)?;
+        self.opened(store, vault.keys())?;
         Ok(())
     }
 
@@ -151,7 +186,7 @@ impl Session {
         let file = vault.change_passphrase(&file, new_passphrase, self.kdf)?;
         let store = self.open_store(&file, &vault, remember)?;
         write_atomically(&self.vault_path(), file.to_json().as_bytes())?;
-        self.store = Some(store);
+        self.opened(store, vault.keys())?;
         Ok(())
     }
 
@@ -167,8 +202,10 @@ impl Session {
         match Store::open(&self.db_path(), &key) {
             Ok(mut store) => {
                 purge_old_trash(&mut store);
-                self.store = Some(store);
-                Ok(())
+                let (_, vault) = store
+                    .load_vault()?
+                    .ok_or(SessionError::WrongState("database has no vault"))?;
+                self.opened(store, vault.keys())
             }
             Err(e) => {
                 // A stale key would fail on every launch; forget it.
@@ -176,6 +213,13 @@ impl Session {
                 Err(e.into())
             }
         }
+    }
+
+    /// Becomes unlocked: keeps the database and opens the attachment store.
+    fn opened(&mut self, store: Store, keys: &Keyring) -> Result<()> {
+        self.blobs = Some(BlobStore::open(self.dir.join(BLOBS_DIR), keys.clone())?);
+        self.store = Some(store);
+        Ok(())
     }
 
     fn open_store(&self, file: &VaultFile, vault: &UnlockedVault, remember: bool) -> Result<Store> {
@@ -305,6 +349,29 @@ mod tests {
         let mut s = session(dir.path(), &keychain);
         assert_eq!(s.status(), Status::Unlocked);
         assert_eq!(s.store().unwrap().tree().unwrap()[0].title, "Hello");
+    }
+
+    #[test]
+    fn attachments_survive_reopening() {
+        let dir = tempfile::tempdir().unwrap();
+        let keychain = Arc::new(MemoryStore::default());
+        set_up(dir.path(), &keychain);
+        let id = {
+            let mut s = session(dir.path(), &keychain);
+            let (store, blobs) = s.attachments().unwrap();
+            let id = blobs.put(b"image bytes").unwrap();
+            store.record_blob(&id, 11, "image/png").unwrap();
+            id
+        };
+
+        let mut s = session(dir.path(), &keychain);
+        let (store, blobs) = s.attachments().unwrap();
+        assert_eq!(blobs.read(&id).unwrap(), b"image bytes");
+        assert_eq!(store.blob(&id).unwrap().unwrap().mime, "image/png");
+
+        // Locked: no access.
+        let mut locked = session(dir.path(), &Arc::new(MemoryStore::default()));
+        assert!(matches!(locked.attachments(), Err(SessionError::Locked)));
     }
 
     #[test]

@@ -114,4 +114,23 @@ export interface Api {
   saveReply(id: Id, body: string): Promise<void>
   /** Deletes a reply for good. */
   deleteReply(id: Id): Promise<void>
+
+  /** Encrypts and stores a file; reference it in Markdown as `attachment:<id>`. */
+  addAttachment(file: File): Promise<AttachmentInfo>
+  /** URL an <img> can load an image attachment from. */
+  attachmentUrl(id: string): string
+  /** Opens an attachment in its default program. */
+  openAttachment(id: string, name: string): Promise<void>
+  /** Asks where to save an attachment; false if cancelled. */
+  saveAttachment(id: string, name: string): Promise<boolean>
 }
+
+export interface AttachmentInfo {
+  /** 64 hex digits */
+  id: string
+  size: number
+  mime: string
+}
+
+/** Largest attachment accepted (the backend enforces it too). */
+export const MAX_ATTACHMENT_SIZE = 100 * 1024 * 1024

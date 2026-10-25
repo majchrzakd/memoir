@@ -41,6 +41,8 @@ const samples: Record<string, string> = {
   hardBreak: 'line one  \nline two',
   escaping: 'Literal \\*stars\\*, \\_underscores\\_, \\# hash, \\[brackets\\] and a | pipe.',
   unicode: 'Zażółć gęślą jaźń — 日本語 — 🙂',
+  attachmentImage: '![photo.png](attachment:' + 'a'.repeat(64) + ')',
+  attachmentFile: 'See [report.pdf](attachment:' + 'b'.repeat(64) + ') for details.',
   listItemParagraphs: '- first paragraph\n\n  second paragraph\n- next item',
   mixedDocument:
     '# Trip\n\nPack:\n\n- [x] passport\n- [ ] charger\n\n> Remember **visa**.\n\n| Day | Plan |\n| --- | --- |\n| 1 | Arrive |\n\n```\nflight LO 123\n```',

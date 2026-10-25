@@ -16,8 +16,9 @@ is usable locally before sync exists.
 | M0 | ✅ done |
 | M1 | ✅ done |
 | M2 | ✅ done (`revisions` / `remote_state` tables moved to M6, where they're used) |
-| M3 | ✅ done — tested in the browser against the mock and via unit tests; hands-on check in the desktop app pending |
-| M4–M8 | not started |
+| M3 | ✅ done (plus feedback: note dates, Later list, threads) |
+| M4 | ✅ done — attachment cleanup (unreferenced files) moved to M6 |
+| M5–M8 | not started |
 
 ## M0 — Foundations & spikes
 Set up the project and kill the big unknowns before building on them.
@@ -107,6 +108,7 @@ download encrypted files, and survive token expiry and flaky network.
 - Tree anomaly resolution (cycles, orphans), deterministic on all devices
 - Blob sync (upload before the note revision that references it)
 - Revision GC with grace period
+- Attachment cleanup: delete local and remote attachments no longer referenced by any note, reply or history version (after a grace period)
 - Sync triggers: edit debounce, startup, focus, 60 s timer, manual
 - **Close-time flush** and Windows shutdown-block reason
 - Second-device setup: sign in → download vault → passphrase → full pull

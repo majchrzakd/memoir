@@ -5,6 +5,7 @@
   import { app } from '../app.svelte'
   import { fullTime, sinceTime } from '../time'
   import Icon from '../ui/Icon.svelte'
+  import { attachmentActions } from './attachmentActions'
   import { editorExtensions } from './extensions'
   import Thread from './Thread.svelte'
   import Toolbar from './Toolbar.svelte'
@@ -91,7 +92,7 @@
       status = 'saved'
       editor = new Editor({
         element: host,
-        extensions: editorExtensions(),
+        extensions: editorExtensions(app.editorOptions()),
         content: note.body,
         contentType: 'markdown',
         editorProps: { attributes: { class: 'prose', spellcheck: 'true' } },
@@ -218,7 +219,7 @@
             {/if}
           </div>
         {/if}
-        <div class="body" bind:this={host}></div>
+        <div class="body" bind:this={host} use:attachmentActions></div>
         {#if !side}
           <div class="below">
             {#key noteId}<Thread {noteId} bind:this={thread} />{/key}
