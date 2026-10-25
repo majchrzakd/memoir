@@ -186,6 +186,17 @@ due date (`due_date`, a calendar date `YYYY-MM-DD`, no time zone). The Later
 tab lists such notes, dated ones first (soonest first), then by creation
 time, newest first (same order within one due date).
 
+**Threads**: a note can have replies, like a Slack thread. A reply is a
+note without a title whose parent is a note — so trash, purge, search,
+history and sync treat replies like any other object. Rules (enforced in the
+store): only notes have replies, one level only, replies don't appear in the
+tree (the note shows a reply count), can't be moved, trashed on their own or
+put on Later, and are deleted directly (no trash). Replies are ordered by
+creation time. A search match in a reply points at its note (`reply_id`).
+The UI shows the thread below the note or in a side column (a switch,
+remembered per device; side needs a wide window). Unsent reply drafts live
+in memory only.
+
 **Order of siblings**: fractional-index sort keys
 (`crates/memoir-core/src/store/sort_key.rs`), so a move or reorder changes a
 single object.

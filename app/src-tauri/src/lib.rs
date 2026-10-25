@@ -56,6 +56,10 @@ pub fn run() {
             commands::search,
             commands::set_later,
             commands::later_notes,
+            commands::replies,
+            commands::add_reply,
+            commands::save_reply,
+            commands::delete_reply,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Memoir");

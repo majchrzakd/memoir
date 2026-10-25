@@ -15,6 +15,8 @@ export interface TreeItem {
   sort_key: string
   updated_at: number
   trashed_at: number | null
+  /** Number of replies in the note's thread (0 for folders). */
+  replies: number
 }
 
 export interface Note {
@@ -49,6 +51,17 @@ export interface SearchHit {
   parent_id: Id | null
   title: string
   snippet: string
+  /** Set when the match is in a reply; `id` is then the thread's note. */
+  reply_id: Id | null
+}
+
+/** A reply in a note's thread (a note without a title). */
+export interface Reply {
+  id: Id
+  /** Markdown */
+  body: string
+  created_at: number
+  updated_at: number
 }
 
 export const MATCH_START = '\u0001'
@@ -94,4 +107,11 @@ export interface Api {
   setLater(id: Id, later: boolean, dueDate: string | null): Promise<void>
   /** Later notes: dated first (soonest first), then by creation, newest first. */
   laterNotes(): Promise<LaterItem[]>
+
+  /** Replies in a note's thread, oldest first. */
+  replies(noteId: Id): Promise<Reply[]>
+  addReply(noteId: Id, body: string): Promise<Id>
+  saveReply(id: Id, body: string): Promise<void>
+  /** Deletes a reply for good. */
+  deleteReply(id: Id): Promise<void>
 }

@@ -42,6 +42,10 @@ pub enum StoreError {
     NotAFolder(ObjectId),
     #[error("{0} is not a note")]
     NotANote(ObjectId),
+    #[error("{0} is a reply; replies stay with their note")]
+    Reply(ObjectId),
+    #[error("{0} is not a reply")]
+    NotAReply(ObjectId),
     #[error("a folder can't be moved into itself or one of its subfolders")]
     Cycle,
     #[error("{0} is not in the target folder")]
@@ -158,6 +162,8 @@ pub struct TreeItem {
     /// the Later flag.
     pub updated_at: i64,
     pub trashed_at: Option<i64>,
+    /// Number of replies in the note's thread (always 0 for folders).
+    pub replies: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -191,11 +197,25 @@ pub struct LaterItem {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SearchHit {
+    /// The note to open (for a match in a reply: the note the thread belongs to).
     pub id: ObjectId,
     pub parent_id: Option<ObjectId>,
     pub title: String,
     /// Plain-text excerpt; matches are wrapped in [`MATCH_START`]/[`MATCH_END`].
     pub snippet: String,
+    /// Set when the match is in a reply.
+    pub reply_id: Option<ObjectId>,
+}
+
+/// A reply in a note's thread: a note without a title whose parent is a
+/// note. Replies don't appear in the tree and have no replies of their own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Reply {
+    pub id: ObjectId,
+    /// Markdown.
+    pub body: String,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -240,7 +260,17 @@ const HIDDEN_CTE: &str = "
         SELECT o.id FROM objects o JOIN hidden h ON o.parent_id = h.id
     )";
 
-const TREE_COLUMNS: &str = "id, kind, parent_id, title, sort_key, updated_at, trashed_at";
+/// Columns read by [`tree_item`], for `objects o`.
+const TREE_COLUMNS: &str = "
+    o.id, o.kind, o.parent_id, o.title, o.sort_key, o.updated_at, o.trashed_at,
+    CASE WHEN o.kind = 2 THEN (
+        SELECT count(*) FROM objects r
+        WHERE r.parent_id = o.id AND r.kind = 2 AND r.trashed_at IS NULL
+    ) ELSE 0 END";
+
+/// True for `objects o` rows that are replies: notes whose parent is a note.
+const IS_REPLY: &str = "(o.kind = 2 AND EXISTS (
+    SELECT 1 FROM objects p WHERE p.id = o.parent_id AND p.kind = 2))";
 
 pub struct Store {
     conn: Connection,
@@ -335,14 +365,14 @@ impl Store {
 
     // ---- Tree ---------------------------------------------------------
 
-    /// Every folder and note not in the trash, ordered by parent, then
-    /// folders before notes, then position.
+    /// Every folder and note not in the trash (replies excluded), ordered by
+    /// parent, then folders before notes, then position.
     pub fn tree(&self) -> Result<Vec<TreeItem>> {
         let mut stmt = self.conn.prepare_cached(&format!(
             "{HIDDEN_CTE}
-             SELECT {TREE_COLUMNS} FROM objects
-             WHERE id NOT IN hidden
-             ORDER BY parent_id, kind, sort_key, id"
+             SELECT {TREE_COLUMNS} FROM objects o
+             WHERE o.id NOT IN hidden AND NOT {IS_REPLY}
+             ORDER BY o.parent_id, o.kind, o.sort_key, o.id"
         ))?;
         let mut items = stmt
             .query_map([], tree_item)?
@@ -363,10 +393,11 @@ impl Store {
     pub fn trashed_items(&self) -> Result<Vec<TreeItem>> {
         let mut stmt = self.conn.prepare_cached(&format!(
             "{HIDDEN_CTE}
-             SELECT {TREE_COLUMNS} FROM objects
-             WHERE trashed_at IS NOT NULL
-               AND (parent_id IS NULL OR parent_id NOT IN hidden)
-             ORDER BY trashed_at DESC, id"
+             SELECT {TREE_COLUMNS} FROM objects o
+             WHERE o.trashed_at IS NOT NULL
+               AND (o.parent_id IS NULL OR o.parent_id NOT IN hidden)
+               AND NOT {IS_REPLY}
+             ORDER BY o.trashed_at DESC, o.id"
         ))?;
         Ok(stmt
             .query_map([], tree_item)?
@@ -441,7 +472,7 @@ impl Store {
     pub fn move_item(&mut self, id: &ObjectId, placement: Placement) -> Result<()> {
         let now = self.now();
         let tx = self.conn.transaction()?;
-        object_kind(&tx, id)?;
+        reject_reply(&tx, id)?;
         let sort_key = place(&tx, placement, Some(id))?;
         tx.execute(
             "UPDATE objects SET parent_id = ?2, sort_key = ?3 WHERE id = ?1",
@@ -456,7 +487,7 @@ impl Store {
     pub fn move_to_trash(&mut self, id: &ObjectId) -> Result<()> {
         let now = self.now();
         let tx = self.conn.transaction()?;
-        object_kind(&tx, id)?;
+        reject_reply(&tx, id)?;
         let changed = tx.execute(
             "UPDATE objects SET trashed_at = ?2 WHERE id = ?1 AND trashed_at IS NULL",
             params![id, now],
@@ -646,6 +677,7 @@ impl Store {
     /// or takes it off (`later = false`, which also clears the due date).
     pub fn set_later(&mut self, id: &ObjectId, later: bool, due_date: Option<&str>) -> Result<()> {
         let old = self.note(id)?;
+        reject_reply(&self.conn, id)?;
         let due_date = match (later, due_date) {
             (true, Some(d)) => Some(valid_date(d)?),
             _ => None,
@@ -723,17 +755,23 @@ impl Store {
         self.save_note(id, &version.title, &version.body)
     }
 
-    /// Notes containing every word of `query` (the last one as a prefix),
-    /// best matches first. Trashed notes are excluded.
+    /// Notes and replies containing every word of `query` (the last one as a
+    /// prefix), best matches first. Trashed notes are excluded. A match in a
+    /// reply points at its note, with `reply_id` set.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
         let Some(fts) = text::fts_query(query) else {
             return Ok(Vec::new());
         };
         let mut stmt = self.conn.prepare_cached(&format!(
             "{HIDDEN_CTE}
-             SELECT o.id, o.parent_id, o.title,
-                    snippet(notes_fts, -1, '{MATCH_START}', '{MATCH_END}', '…', 16)
-             FROM notes_fts JOIN objects o ON o.seq = notes_fts.rowid
+             SELECT coalesce(p.id, o.id),
+                    CASE WHEN p.id IS NULL THEN o.parent_id ELSE p.parent_id END,
+                    coalesce(p.title, o.title),
+                    snippet(notes_fts, -1, '{MATCH_START}', '{MATCH_END}', '…', 16),
+                    CASE WHEN p.id IS NULL THEN NULL ELSE o.id END
+             FROM notes_fts
+             JOIN objects o ON o.seq = notes_fts.rowid
+             LEFT JOIN objects p ON p.id = o.parent_id AND p.kind = 2
              WHERE notes_fts MATCH ?1 AND o.id NOT IN hidden
              ORDER BY bm25(notes_fts, 10.0, 1.0, 5.0)
              LIMIT ?2"
@@ -745,9 +783,73 @@ impl Store {
                     parent_id: r.get(1)?,
                     title: r.get(2)?,
                     snippet: r.get(3)?,
+                    reply_id: r.get(4)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?)
+    }
+
+    // ---- Threads ------------------------------------------------------
+
+    /// The replies in a note's thread, oldest first.
+    pub fn replies(&self, note_id: &ObjectId) -> Result<Vec<Reply>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT o.id, b.body, o.created_at, o.updated_at
+             FROM objects o JOIN note_bodies b ON b.seq = o.seq
+             WHERE o.parent_id = ?1 AND o.kind = 2 AND o.trashed_at IS NULL
+             ORDER BY o.created_at, o.id",
+        )?;
+        Ok(stmt
+            .query_map([note_id], |r| {
+                Ok(Reply {
+                    id: r.get(0)?,
+                    body: r.get(1)?,
+                    created_at: r.get(2)?,
+                    updated_at: r.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Adds a reply to a note's thread. Edit it with [`Store::save_note`]
+    /// (title stays empty) and remove it with [`Store::delete_reply`].
+    pub fn add_reply(&mut self, note_id: &ObjectId, body: &str) -> Result<ObjectId> {
+        let now = self.now();
+        let id = ObjectId::generate();
+        let tx = self.conn.transaction()?;
+        if object_kind(&tx, note_id)? != Kind::Note {
+            return Err(StoreError::NotANote(*note_id));
+        }
+        reject_reply(&tx, note_id)?;
+        if ancestors(&tx, note_id)?.iter().any(|(_, t)| t.is_some()) {
+            return Err(StoreError::InTrash(*note_id));
+        }
+        // Replies are ordered by creation time; the sort key is unused.
+        tx.execute(
+            "INSERT INTO objects (id, kind, parent_id, title, sort_key, created_at, updated_at)
+             VALUES (?1, ?2, ?3, '', 'a0', ?4, ?4)",
+            params![id, Kind::Note.code(), note_id, now],
+        )?;
+        tx.execute(
+            "INSERT INTO note_bodies (seq, body) VALUES (?1, ?2)",
+            params![tx.last_insert_rowid(), body],
+        )?;
+        index_note(&tx, &id)?;
+        enqueue(&tx, &id, now)?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Deletes a reply for good (replies don't go to the trash).
+    pub fn delete_reply(&mut self, id: &ObjectId) -> Result<()> {
+        let now = self.now();
+        let tx = self.conn.transaction()?;
+        if !is_reply(&tx, id)? {
+            return Err(StoreError::NotAReply(*id));
+        }
+        purge_subtree(&tx, id, now)?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Number of local changes not yet pushed to the cloud.
@@ -768,7 +870,27 @@ fn tree_item(r: &Row<'_>) -> rusqlite::Result<TreeItem> {
         sort_key: r.get(4)?,
         updated_at: r.get(5)?,
         trashed_at: r.get(6)?,
+        replies: r.get(7)?,
     })
+}
+
+fn is_reply(conn: &Connection, id: &ObjectId) -> Result<bool> {
+    conn.query_row(
+        &format!("SELECT {IS_REPLY} FROM objects o WHERE o.id = ?1"),
+        [id],
+        |r| r.get(0),
+    )
+    .optional()?
+    .ok_or(StoreError::NotFound(*id))
+}
+
+/// Replies stay with their note: they can't be moved, trashed on their own,
+/// put on the Later list or receive replies.
+fn reject_reply(conn: &Connection, id: &ObjectId) -> Result<()> {
+    if is_reply(conn, id)? {
+        return Err(StoreError::Reply(*id));
+    }
+    Ok(())
 }
 
 fn folder_name(name: &str) -> Result<String> {

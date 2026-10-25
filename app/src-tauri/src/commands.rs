@@ -5,7 +5,7 @@
 use std::sync::{Mutex, MutexGuard};
 
 use memoir_core::store::{
-    LaterItem, Note, ObjectId, Placement, SearchHit, Store, StoreError, TreeItem,
+    LaterItem, Note, ObjectId, Placement, Reply, SearchHit, Store, StoreError, TreeItem,
 };
 use tauri::State;
 use tokio::sync::Notify;
@@ -181,4 +181,30 @@ pub fn set_later(
 #[tauri::command(async)]
 pub fn later_notes(state: State<'_, AppState>) -> CmdResult<Vec<LaterItem>> {
     state.with_store(|s| s.later_notes())
+}
+
+// ---- Threads ----------------------------------------------------------
+
+#[tauri::command(async)]
+pub fn replies(state: State<'_, AppState>, note_id: ObjectId) -> CmdResult<Vec<Reply>> {
+    state.with_store(|s| s.replies(&note_id))
+}
+
+#[tauri::command(async)]
+pub fn add_reply(
+    state: State<'_, AppState>,
+    note_id: ObjectId,
+    body: String,
+) -> CmdResult<ObjectId> {
+    state.with_store(|s| s.add_reply(&note_id, &body))
+}
+
+#[tauri::command(async)]
+pub fn save_reply(state: State<'_, AppState>, id: ObjectId, body: String) -> CmdResult<()> {
+    state.with_store(|s| s.save_note(&id, "", &body))
+}
+
+#[tauri::command(async)]
+pub fn delete_reply(state: State<'_, AppState>, id: ObjectId) -> CmdResult<()> {
+    state.with_store(|s| s.delete_reply(&id))
 }

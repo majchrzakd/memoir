@@ -36,9 +36,15 @@
     }
   }
 
+  /** Several hits can share a note (matches in its replies). */
+  function hitKey(hit: SearchHit): string {
+    return hit.reply_id ?? hit.id
+  }
+
   async function open(hit: SearchHit | undefined) {
     if (!hit) return
     close()
+    app.focusReplyId = hit.reply_id
     await app.openNote(hit.id)
   }
 
@@ -77,23 +83,26 @@
         role="combobox"
         aria-expanded={hits.length > 0}
         aria-controls="search-results"
-        aria-activedescendant={hits[active] ? `hit-${hits[active].id}` : undefined}
+        aria-activedescendant={hits[active] ? `hit-${hitKey(hits[active])}` : undefined}
       />
     </div>
 
     {#if hits.length}
       <ul id="search-results" role="listbox" bind:this={list}>
-        {#each hits as hit, i (hit.id)}
+        {#each hits as hit, i (hitKey(hit))}
           {@const path = folderPath(app.byId, hit.id)}
           <li
-            id="hit-{hit.id}"
+            id="hit-{hitKey(hit)}"
             role="option"
             aria-selected={i === active}
             onmousemove={() => (active = i)}
             onclick={() => open(hit)}
             onkeydown={() => {}}
           >
-            <div class="title">{displayTitle({ title: hit.title, kind: 'note' })}</div>
+            <div class="title">
+              {displayTitle({ title: hit.title, kind: 'note' })}
+              {#if hit.reply_id}<span class="in-reply">reply</span>{/if}
+            </div>
             {#if path}<div class="path">{path}</div>{/if}
             <div class="snippet">
               {#each snippetParts(hit.snippet) as part, p (p)}
@@ -154,6 +163,16 @@
 
   .title {
     font-weight: 600;
+  }
+
+  .in-reply {
+    margin-left: 6px;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: normal;
   }
 
   .path {

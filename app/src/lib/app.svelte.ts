@@ -10,6 +10,7 @@ type View = 'note' | 'trash'
 
 const EXPANDED_KEY = 'memoir.expanded'
 const OPEN_NOTE_KEY = 'memoir.openNote'
+const THREAD_LAYOUT_KEY = 'memoir.threadLayout'
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -51,6 +52,13 @@ class App {
   renamingId = $state<Id | null>(null)
 
   sidebarTab = $state<'notes' | 'later'>('notes')
+
+  /** Where a note's thread is shown: under the note, or in a side column. */
+  threadLayout = $state<'below' | 'side'>(load(THREAD_LAYOUT_KEY, 'below'))
+  /** Reply to scroll to once its thread is shown (set by search). */
+  focusReplyId = $state<Id | null>(null)
+  /** Unsent replies per note. Memory only: browser storage is not encrypted. */
+  replyDrafts = new Map<Id, string>()
   /** Bumped whenever the Later list may have changed. */
   laterVersion = $state(0)
 
@@ -156,6 +164,16 @@ class App {
   noteSaved(id: Id, title: string, updatedAt: number) {
     this.items = this.items.map((i) => (i.id === id ? { ...i, title, updated_at: updatedAt } : i))
     this.laterChanged()
+  }
+
+  /** Updates a note's reply count in the tree. */
+  replyCountChanged(id: Id, replies: number) {
+    this.items = this.items.map((i) => (i.id === id ? { ...i, replies } : i))
+  }
+
+  setThreadLayout(layout: 'below' | 'side') {
+    this.threadLayout = layout
+    persist(THREAD_LAYOUT_KEY, layout)
   }
 
   /** Tells the Later list to reload. */

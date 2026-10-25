@@ -125,9 +125,30 @@ export function createMockApi(): Api {
     return id
   }
 
+  // A reply is a note whose parent is a note.
+  function isReply(o: Obj): boolean {
+    return o.kind === 'note' && !!o.parent_id && objects.get(o.parent_id)?.kind === 'note'
+  }
+
+  function repliesOf(id: Id): Obj[] {
+    return [...objects.values()]
+      .filter((r) => r.parent_id === id && r.kind === 'note' && r.trashed_at === null)
+      .sort((a, b) => a.created_at - b.created_at)
+  }
+
   function toItem(o: Obj): TreeItem {
     const { id, kind, parent_id, title, updated_at, trashed_at } = o
-    return { id, kind, parent_id, title, sort_key: String(o.order), updated_at, trashed_at }
+    const replies = kind === 'note' ? repliesOf(id).length : 0
+    return {
+      id,
+      kind,
+      parent_id,
+      title,
+      sort_key: String(o.order),
+      updated_at,
+      trashed_at,
+      replies,
+    }
   }
 
   function seed() {
@@ -160,6 +181,36 @@ export function createMockApi(): Api {
     Object.assign(byTitle('Reading list'), { later_at: now(), due_date: day(3) })
     Object.assign(byTitle('Daily log 7'), { later_at: now(), due_date: day(-1) })
     Object.assign(byTitle('Meeting notes'), { later_at: now(), due_date: null })
+
+    // A thread with a few replies, a day apart.
+    const meeting = byTitle('Meeting notes')
+    const updates = [
+      'Budget review moved to **Thursday**.',
+      'Beta is out 🎉\n\n- [x] release notes\n- [ ] announce in the newsletter',
+      'Ania asked for the slides — sent.',
+    ]
+    updates.forEach((body, i) =>
+      insertReply(meeting.id, body, meeting.created_at + (i + 1) * 86400_000),
+    )
+  }
+
+  function insertReply(noteId: Id, body: string, at: number): Id {
+    const id = newId()
+    objects.set(id, {
+      id,
+      kind: 'note',
+      parent_id: noteId,
+      title: '',
+      order: 0,
+      body,
+      tags: [],
+      created_at: at,
+      updated_at: at,
+      trashed_at: null,
+      later_at: null,
+      due_date: null,
+    })
+    return id
   }
 
   const plain = (md: string) =>
@@ -199,7 +250,7 @@ export function createMockApi(): Api {
     async tree() {
       const kindOrder = (k: Kind) => (k === 'folder' ? 0 : 1)
       return [...objects.values()]
-        .filter((o) => !hidden(o))
+        .filter((o) => !hidden(o) && !isReply(o))
         .sort(
           (a, b) =>
             (a.parent_id ?? '').localeCompare(b.parent_id ?? '') ||
@@ -210,7 +261,9 @@ export function createMockApi(): Api {
     },
     async trashedItems() {
       return [...objects.values()]
-        .filter((o) => o.trashed_at !== null && !(o.parent_id && hidden(get(o.parent_id))))
+        .filter(
+          (o) => o.trashed_at !== null && !isReply(o) && !(o.parent_id && hidden(get(o.parent_id))),
+        )
         .sort((a, b) => (b.trashed_at ?? 0) - (a.trashed_at ?? 0))
         .map(toItem)
     },
@@ -300,7 +353,16 @@ export function createMockApi(): Api {
                 text.slice(at, at + words[0].length) +
                 MATCH_END +
                 text.slice(at + words[0].length, at + 80)
-          return { id: o.id, parent_id: o.parent_id, title: o.title, snippet }
+          const thread = isReply(o) ? get(o.parent_id!) : null
+          return thread
+            ? {
+                id: thread.id,
+                parent_id: thread.parent_id,
+                title: thread.title,
+                snippet,
+                reply_id: o.id,
+              }
+            : { id: o.id, parent_id: o.parent_id, title: o.title, snippet, reply_id: null }
         })
     },
     async setLater(id, later, dueDate) {
@@ -328,6 +390,29 @@ export function createMockApi(): Api {
           updated_at,
           due_date,
         }))
+    },
+
+    async replies(noteId) {
+      return repliesOf(noteId).map(({ id, body, created_at, updated_at }) => ({
+        id,
+        body,
+        created_at,
+        updated_at,
+      }))
+    },
+    async addReply(noteId, body) {
+      const note = get(noteId)
+      if (note.kind !== 'note') throw `${noteId} is not a note`
+      if (isReply(note)) throw `${noteId} is a reply; replies stay with their note`
+      if (hidden(note)) throw `${noteId} is in the trash`
+      return insertReply(noteId, body, now())
+    },
+    async saveReply(id, body) {
+      await api.saveNote(id, '', body)
+    },
+    async deleteReply(id) {
+      if (!isReply(get(id))) throw `${id} is not a reply`
+      objects.delete(id)
     },
   }
   return api

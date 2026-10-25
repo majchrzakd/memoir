@@ -275,6 +275,15 @@
             />
           {:else}
             <span class="title" class:untitled={!item.title.trim()}>{displayTitle(item)}</span>
+            {#if item.replies > 0}
+              <span
+                class="replies"
+                title="{item.replies} {item.replies === 1 ? 'reply' : 'replies'}"
+                aria-label="{item.replies} {item.replies === 1 ? 'reply' : 'replies'}"
+              >
+                <Icon name="thread" size={13} />{item.replies}
+              </span>
+            {/if}
             {#if item.kind === 'note'}
               <span class="time" title="Edited {fullTime(item.updated_at)}">
                 {shortTime(item.updated_at)}
@@ -380,6 +389,15 @@
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .replies {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 11px;
+    color: var(--text-muted);
   }
 
   .time {

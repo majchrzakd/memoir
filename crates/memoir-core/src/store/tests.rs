@@ -570,3 +570,100 @@ fn edited_time_reflects_content_only() {
     s.save_note(&note, "n", "text").unwrap();
     assert!(s.note(&note).unwrap().updated_at > created);
 }
+
+#[test]
+fn threads_hold_replies_outside_the_tree() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let note = s.create_note(last(None), "Project", "main text").unwrap();
+    let first = s.add_reply(&note, "first update").unwrap();
+    let second = s.add_reply(&note, "second update").unwrap();
+
+    let replies = s.replies(&note).unwrap();
+    assert_eq!(
+        replies.iter().map(|r| r.id).collect::<Vec<_>>(),
+        [first, second]
+    );
+    assert_eq!(replies[0].body, "first update");
+
+    // Replies are not tree items; the note carries the count.
+    let tree = s.tree().unwrap();
+    assert_eq!(tree.len(), 1);
+    assert_eq!((tree[0].id, tree[0].replies), (note, 2));
+
+    // Editing a reply uses save_note.
+    s.save_note(&first, "", "first update, edited").unwrap();
+    assert_eq!(s.replies(&note).unwrap()[0].body, "first update, edited");
+
+    s.delete_reply(&first).unwrap();
+    assert_eq!(s.tree().unwrap()[0].replies, 1);
+    assert!(matches!(s.note(&first), Err(StoreError::NotFound(_))));
+    assert!(outbox(s).contains(&first), "deletion is queued for sync");
+}
+
+#[test]
+fn threads_are_one_level_and_replies_stay_with_their_note() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let folder = s.create_folder(last(None), "F").unwrap();
+    let note = s.create_note(last(None), "N", "").unwrap();
+    let reply = s.add_reply(&note, "r").unwrap();
+
+    assert!(matches!(
+        s.add_reply(&reply, "x"),
+        Err(StoreError::Reply(_))
+    ));
+    assert!(matches!(
+        s.add_reply(&folder, "x"),
+        Err(StoreError::NotANote(_))
+    ));
+    assert!(matches!(
+        s.move_item(&reply, last(None)),
+        Err(StoreError::Reply(_))
+    ));
+    assert!(matches!(s.move_to_trash(&reply), Err(StoreError::Reply(_))));
+    assert!(matches!(
+        s.set_later(&reply, true, None),
+        Err(StoreError::Reply(_))
+    ));
+    assert!(matches!(
+        s.delete_reply(&note),
+        Err(StoreError::NotAReply(_))
+    ));
+    // Nothing can be placed inside a note except through add_reply.
+    assert!(matches!(
+        s.create_note(last(Some(note)), "x", ""),
+        Err(StoreError::NotAFolder(_))
+    ));
+
+    s.move_to_trash(&note).unwrap();
+    assert!(matches!(
+        s.add_reply(&note, "x"),
+        Err(StoreError::InTrash(_))
+    ));
+}
+
+#[test]
+fn search_finds_replies_and_points_at_their_note() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let note = s
+        .create_note(last(None), "Renovation", "kitchen plans")
+        .unwrap();
+    let reply = s.add_reply(&note, "Plumber comes on Tuesday").unwrap();
+
+    let hits = s.search("plumber", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(
+        (hits[0].id, hits[0].reply_id, hits[0].title.as_str()),
+        (note, Some(reply), "Renovation")
+    );
+    assert_eq!(s.search("kitchen", 10).unwrap()[0].reply_id, None);
+
+    // Trashing the note hides its replies; purging deletes them.
+    s.move_to_trash(&note).unwrap();
+    assert!(s.search("plumber", 10).unwrap().is_empty());
+    assert!(s.trashed_items().unwrap().iter().all(|i| i.id != reply));
+    s.purge(&note).unwrap();
+    assert!(matches!(s.note(&reply), Err(StoreError::NotFound(_))));
+}

@@ -35,4 +35,8 @@ export const tauriApi: Api = {
   search: (query, limit) => invoke('search', { query, limit }),
   setLater: (id, later, dueDate) => invoke('set_later', { id, later, dueDate }),
   laterNotes: () => invoke('later_notes'),
+  replies: (noteId) => invoke('replies', { noteId }),
+  addReply: (noteId, body) => invoke('add_reply', { noteId, body }),
+  saveReply: (id, body) => invoke('save_reply', { id, body }),
+  deleteReply: (id) => invoke('delete_reply', { id }),
 }

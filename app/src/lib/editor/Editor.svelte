@@ -6,6 +6,7 @@
   import { fullTime, sinceTime } from '../time'
   import Icon from '../ui/Icon.svelte'
   import { editorExtensions } from './extensions'
+  import Thread from './Thread.svelte'
   import Toolbar from './Toolbar.svelte'
   import './prose.css'
 
@@ -25,6 +26,12 @@
   /** Current time, refreshed so "Edited 5 min ago" stays true. */
   let now = $state(Date.now())
   let loadError = $state<string | null>(null)
+
+  /** The thread goes in a side column only when there is room for both. */
+  const SIDE_MIN_WIDTH = 900
+  let width = $state(0)
+  const side = $derived(app.threadLayout === 'side' && width >= SIDE_MIN_WIDTH)
+  let thread = $state<Thread>()
 
   let loadedId: Id | null = null
   let dirty = false
@@ -115,7 +122,7 @@
    * line level with the click, or at the end when clicking below the text. */
   function focusFromClick(e: MouseEvent) {
     const target = e.target as HTMLElement
-    if (!editor || target.closest('.ProseMirror, input, button, .meta')) return
+    if (!editor || target.closest('.ProseMirror, input, button, .meta, .thread')) return
     e.preventDefault()
     const view = editor.view
     const rect = view.dom.getBoundingClientRect()
@@ -132,12 +139,18 @@
     void load(noteId)
   })
 
+  /** Saves the note and any reply being edited. */
+  async function flushAll() {
+    await flush()
+    await thread?.flush()
+  }
+
   onMount(() => {
-    app.flushEditor = flush
+    app.flushEditor = flushAll
     const clock = setInterval(() => (now = Date.now()), 30_000)
     return () => {
       clearInterval(clock)
-      if (app.flushEditor === flush) app.flushEditor = async () => {}
+      if (app.flushEditor === flushAll) app.flushEditor = async () => {}
       const closing = editor
       void flush().then(() => closing?.destroy())
     }
@@ -148,64 +161,76 @@
   )
 </script>
 
-<section class="editor">
+<section class="editor" bind:clientWidth={width}>
   {#if editor}
     <Toolbar {editor} {tick} />
   {/if}
-  <!-- Mouse-only convenience; keyboard users reach the text with Tab / Enter. -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="scroll" onmousedown={focusFromClick}>
-    <div class="page">
-      {#if loadError}
-        <p class="error">{loadError}</p>
-      {/if}
-      <input
-        class="title"
-        type="text"
-        placeholder="Untitled"
-        bind:this={titleInput}
-        bind:value={title}
-        oninput={scheduleSave}
-        onkeydown={(e) => {
-          if ((e.key === 'Enter' || e.key === 'ArrowDown') && editor) {
-            e.preventDefault()
-            // Focus synchronously (commands.focus waits a frame), so the next
-            // keystroke already lands in the body.
-            editor.commands.setTextSelection(0)
-            editor.view.focus()
-          }
-        }}
-      />
-      {#if meta}
-        <div class="meta">
-          <span title={fullTime(meta.created_at)}>Created {fullTime(meta.created_at)}</span>
-          <span aria-hidden="true">·</span>
-          <span title={fullTime(meta.updated_at)}>Edited {sinceTime(meta.updated_at, now)}</span>
-          <span class="spacer"></span>
-          <button
-            class="later"
-            class:on={meta.later_at !== null}
-            aria-pressed={meta.later_at !== null}
-            title={meta.later_at !== null ? 'Remove from Later' : 'Add to Later'}
-            onclick={() => setLater(meta?.later_at === null, meta?.due_date ?? null)}
-          >
-            <Icon name="clock" size={14} />
-            Later
-          </button>
-          {#if meta.later_at !== null}
-            <input
-              class="due"
-              type="date"
-              aria-label="Due date"
-              title="Due date (optional)"
-              value={meta.due_date ?? ''}
-              onchange={(e) => setLater(true, e.currentTarget.value || null)}
-            />
-          {/if}
-        </div>
-      {/if}
-      <div class="body" bind:this={host}></div>
+  <div class="columns">
+    <!-- Mouse-only convenience; keyboard users reach the text with Tab / Enter. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="scroll" onmousedown={focusFromClick}>
+      <div class="page">
+        {#if loadError}
+          <p class="error">{loadError}</p>
+        {/if}
+        <input
+          class="title"
+          type="text"
+          placeholder="Untitled"
+          bind:this={titleInput}
+          bind:value={title}
+          oninput={scheduleSave}
+          onkeydown={(e) => {
+            if ((e.key === 'Enter' || e.key === 'ArrowDown') && editor) {
+              e.preventDefault()
+              // Focus synchronously (commands.focus waits a frame), so the next
+              // keystroke already lands in the body.
+              editor.commands.setTextSelection(0)
+              editor.view.focus()
+            }
+          }}
+        />
+        {#if meta}
+          <div class="meta">
+            <span title={fullTime(meta.created_at)}>Created {fullTime(meta.created_at)}</span>
+            <span aria-hidden="true">·</span>
+            <span title={fullTime(meta.updated_at)}>Edited {sinceTime(meta.updated_at, now)}</span>
+            <span class="spacer"></span>
+            <button
+              class="later"
+              class:on={meta.later_at !== null}
+              aria-pressed={meta.later_at !== null}
+              title={meta.later_at !== null ? 'Remove from Later' : 'Add to Later'}
+              onclick={() => setLater(meta?.later_at === null, meta?.due_date ?? null)}
+            >
+              <Icon name="clock" size={14} />
+              Later
+            </button>
+            {#if meta.later_at !== null}
+              <input
+                class="due"
+                type="date"
+                aria-label="Due date"
+                title="Due date (optional)"
+                value={meta.due_date ?? ''}
+                onchange={(e) => setLater(true, e.currentTarget.value || null)}
+              />
+            {/if}
+          </div>
+        {/if}
+        <div class="body" bind:this={host}></div>
+        {#if !side}
+          <div class="below">
+            {#key noteId}<Thread {noteId} bind:this={thread} />{/key}
+          </div>
+        {/if}
+      </div>
     </div>
+    {#if side}
+      <aside class="side">
+        {#key noteId}<Thread {noteId} bind:this={thread} />{/key}
+      </aside>
+    {/if}
   </div>
   <footer class:error={status === 'error'}>{statusText}</footer>
 </section>
@@ -218,10 +243,36 @@
     min-width: 0;
   }
 
+  .columns {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
   .scroll {
     flex: 1;
+    min-width: 0;
     overflow-y: auto;
     cursor: text;
+  }
+
+  .body {
+    min-height: 120px;
+  }
+
+  .below {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  .side {
+    flex: none;
+    width: 360px;
+    overflow-y: auto;
+    padding: 20px 16px 120px;
+    border-left: 1px solid var(--border);
+    background: var(--bg-sidebar);
   }
 
   .page {

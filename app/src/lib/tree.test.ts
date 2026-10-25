@@ -23,6 +23,7 @@ const item = (
   sort_key: 'a0',
   updated_at: 0,
   trashed_at: null,
+  replies: 0,
 })
 
 // Work/
