@@ -34,6 +34,19 @@ instance with its own data folder, choose **Open your notebook from Google
 Drive** on its first screen, and edit in both windows. The two instances share
 the Credential Manager entries (same notebook), which is harmless.
 
+### Getting your notes out without the app
+
+Download the **Memoir** folder from Google Drive (Drive gives you a zip;
+extract it), then:
+
+```powershell
+cargo run -p memoir-cli --release -- decrypt <extracted folder> --out <new folder>
+```
+
+It asks for your passphrase (add `--recovery-key` to use the recovery key
+instead) and writes every note as Markdown, with attachments. The Drive copy
+isn't changed. The app's Settings → Export to Markdown gives the same result.
+
 Layout:
 
 | Path | What |

@@ -828,3 +828,17 @@ fn superseded_revisions_list_ancestors_first() {
         .collect();
     assert_eq!(order, ["r3", "r2"]);
 }
+
+#[test]
+fn text_replaced_by_sync_is_kept_in_history() {
+    let mut f = fixture();
+    let id = f.store.create_note(last(None), "N", "mine").unwrap();
+    // Later than the history interval: worth keeping.
+    f.clock.fetch_add(HISTORY_INTERVAL_MS, Ordering::SeqCst);
+    let mut theirs = f.store.payload(&id).unwrap().unwrap();
+    theirs.body = "theirs".into();
+    let sync = f.store.sync_object(&id).unwrap();
+    f.store.apply_synced(&theirs, &sync, false, None).unwrap();
+    assert_eq!(f.store.note(&id).unwrap().body, "theirs");
+    assert_eq!(bodies(&f.store, &id), ["mine"]);
+}

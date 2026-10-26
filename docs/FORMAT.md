@@ -1,7 +1,7 @@
 # Memoir — Storage format, version 1
 
 This document is enough to decrypt a Memoir vault without the app (that is
-what `memoir-cli` will do in M7). Any incompatible change requires a new
+what `memoir decrypt` in `crates/memoir-cli` does). Any incompatible change requires a new
 format version, and readers for older versions must be kept.
 
 Notation: `||` is concatenation, `u32le`/`u32be` are 4-byte little/big-endian
@@ -86,12 +86,51 @@ offset  size  field
 ```
 
 - Key: the object key.
-- AAD = bytes 0..34 of the file || context. The context identifies the
-  object revision; it is defined by the sync layer (M6) and documented there.
+- AAD = bytes 0..34 of the file || context, where context =
+  `"object:" || object id || ":" || revision id` (ASCII).
 - Plaintext = `u32le(n) || zstd_frame[n] || zero bytes`, padded to a multiple
   of 256 bytes. Readers must reject non-zero padding and must cap the
   decompressed size (64 MiB).
-- The decompressed payload's encoding is defined by the store layer (M2).
+
+In the cloud folder each file is one **revision** of one object, named
+`objects/<object id>.<revision id>.mmr` (both ULIDs, Crockford base32). Files
+are never overwritten: every change is a new revision. The decompressed
+payload is JSON:
+
+```json
+{
+  "v": 1,
+  "parents": ["<revision id>", "..."],
+  "object": {
+    "id": "<object id>",
+    "kind": "folder" | "note",
+    "deleted": false,
+    "parent_id": "<object id>" | null,
+    "sort_key": "a0",
+    "title": "…",
+    "body": "Markdown (notes and replies)",
+    "tags": ["…"],
+    "created_at": 1792958800000,
+    "updated_at": 1792958800000,
+    "trashed_at": null,
+    "later_at": null,
+    "due_date": "YYYY-MM-DD" | null,
+    "attachments": [{ "id": "<blob id>", "size": 123, "mime": "image/png" }],
+    "clocks": { "title": { "at": 0, "d": "<device id>" }, "...": "…" }
+  }
+}
+```
+
+- Times are unix milliseconds. A **reply** is a note whose `parent_id` is a
+  note. `deleted: true` is a tombstone: the object was deleted for good.
+- `parents` are the revisions this one replaced (several after a merge). The
+  current state of an object is its *heads*: revisions no other revision
+  lists as a parent. With one head (the usual case) that is the object.
+  With several, they were made concurrently. Merging them the way the app
+  does (field by field by `clocks`, the body with a 3-way merge) is
+  described in docs/ARCHITECTURE.md §6. A simple reader can take the head
+  with the latest `updated_at`.
+- Replaced revisions are deleted after a while, so a parent may be missing.
 
 ## Blob files (attachments)
 

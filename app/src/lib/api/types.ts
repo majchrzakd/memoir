@@ -36,6 +36,13 @@ export interface Note {
   due_date: string | null
 }
 
+export interface HistoryEntry {
+  /** When this version was saved; identifies it. */
+  saved_at: number
+  title: string
+  body: string
+}
+
 export interface LaterItem {
   id: Id
   parent_id: Id | null
@@ -108,6 +115,10 @@ export interface Api {
    */
   saveNote(id: Id, title: string, body: string, base: NoteText): Promise<Note | null>
   search(query: string, limit: number): Promise<SearchHit[]>
+  /** Earlier versions kept on this device, newest first. */
+  noteHistory(id: Id): Promise<HistoryEntry[]>
+  /** Makes an earlier version current (the current text goes into history). */
+  restoreVersion(id: Id, savedAt: number): Promise<void>
   /** Puts a note on the Later list or takes it off (which clears the due date). */
   setLater(id: Id, later: boolean, dueDate: string | null): Promise<void>
   /** Later notes: dated first (soonest first), then by creation, newest first. */
@@ -146,12 +157,31 @@ export interface Api {
   /** New device: gives up on the notebook found. */
   forgetDriveNotebook(): Promise<void>
 
+  /**
+   * Asks for a folder, then exports the whole notebook as Markdown into a new
+   * folder `name` in it. Null if cancelled.
+   */
+  exportNotebook(name: string): Promise<Exported | null>
+  /** Opens the file manager at an export. */
+  showExport(path: string): Promise<void>
+
   syncStatus(): Promise<SyncStatus>
   /** Starts a sync round soon (no-op when not connected). */
   syncNow(): Promise<void>
   onSyncStatus(handler: (status: SyncStatus) => void): Promise<() => void>
   /** Notes and folders changed by other devices (reload what's shown). */
   onSyncChanged(handler: (ids: Id[]) => void): Promise<() => void>
+}
+
+export interface Exported {
+  path: string
+  summary: {
+    folders: number
+    notes: number
+    attachments: number
+    /** Referenced but not on this device; links left as they were. */
+    missing_attachments: number
+  }
 }
 
 export interface NoteText {

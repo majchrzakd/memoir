@@ -132,6 +132,17 @@ impl<P: StorageProvider> SyncEngine<P> {
         Ok(report)
     }
 
+    /// Brings this device up to date with the cloud without writing to it:
+    /// pull, merge, download attachments. For reading a copy of the cloud
+    /// folder (the recovery tool).
+    pub async fn pull_only(&self, local: &impl Local) -> Result<SyncReport> {
+        let mut report = SyncReport::default();
+        self.pull(local, &mut report).await?;
+        local.with(|store, _| self.merge_all(store, &mut report))??;
+        self.fetch_attachments(local).await?;
+        Ok(report)
+    }
+
     // ---- Pull ---------------------------------------------------------
 
     async fn pull(&self, local: &impl Local, report: &mut SyncReport) -> Result<()> {

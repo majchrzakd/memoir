@@ -403,12 +403,27 @@ never assumes a just-made change is already visible to other devices.
 
 ## 8. Data ownership & recovery
 
-- **Export**: in-app "Export to Markdown" — decrypted folder tree of `.md` files
-  plus attachments.
-- **`memoir-cli`**: standalone tool that, given a downloaded copy of the
-  `Memoir/` Drive folder and the passphrase or recovery key, decrypts
-  everything to Markdown. Guarantees access to your notes even if the app stops
-  working. The format is documented in `docs/FORMAT.md` (to be written in M1).
+- **Export** (Settings → Export to Markdown; `memoir_core::export`): a new
+  folder with a directory per folder and a `.md` file per note. Each note has
+  YAML front matter (title, created, updated, tags, Later/due, trashed) and
+  its replies appended under "Replies". Attachments go to `attachments/`,
+  linked by relative paths (named after the link text, with an extension
+  from the type); the trash goes to `Trash/`. File names are made safe for
+  Windows/macOS/Linux and de-duplicated; note files keep their edit time.
+  The export is plain text by design, and the app says so.
+- **`memoir decrypt <folder> --out <dir> [--recovery-key]`** (`crates/memoir-cli`):
+  given a downloaded copy of the `Memoir/` Drive folder (or the folder the
+  Drive zip was extracted into) and the passphrase or recovery key, it reads
+  the folder with the same sync engine the app uses (`FolderProvider`,
+  `SyncEngine::pull_only`, which never writes to the folder) into a
+  temporary encrypted database. It then exports it exactly like the app. A
+  test has two devices write such a folder concurrently and recovers it with
+  the recovery key. The file format is in `docs/FORMAT.md`.
+- **History** (History button on a note): versions kept on this device —
+  after a 10-minute pause and every 10 minutes of continuous editing, the
+  last 50 — including text replaced by sync, so another device's change can
+  be undone. Restoring keeps the current text as a version too. History is
+  not synced.
 
 ---
 

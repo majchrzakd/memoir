@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use rusqlite::{OptionalExtension, params};
 
-use super::{Kind, ObjectId, Result, Store, StoreError, index_note, parse_tags};
+use super::{Kind, ObjectId, Result, Store, StoreError, index_note, parse_tags, snapshot_if_due};
 use crate::sync::payload::{AttachmentRef, Clock, Clocks, ObjectPayload, attachment_ids};
 
 /// A local object waiting to be pushed. `version` grows on every change.
@@ -415,7 +415,20 @@ impl Store {
         seen_version: Option<i64>,
     ) -> Result<()> {
         let now = self.now();
+        // Text that sync replaces stays in history (same rule as local
+        // edits), so another device's change can be undone here.
+        let old = match self.note(&payload.id) {
+            Ok(note) => Some(note),
+            Err(StoreError::NotFound(_) | StoreError::NotANote(_)) => None,
+            Err(e) => return Err(e),
+        };
         let tx = self.conn.transaction()?;
+        if let Some(old) = &old
+            && !payload.deleted
+            && (old.title != payload.title || old.body != payload.body)
+        {
+            snapshot_if_due(&tx, old, now)?;
+        }
         let seq: Option<i64> = tx
             .query_row("SELECT seq FROM objects WHERE id = ?1", [payload.id], |r| {
                 r.get(0)

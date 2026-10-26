@@ -166,7 +166,7 @@ fn is_plausible_mime(mime: &str) -> bool {
 }
 
 /// A file name Windows accepts, with no directory parts.
-fn safe_file_name(name: &str) -> String {
+pub(crate) fn safe_file_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
     let cleaned: String = base
         .chars()

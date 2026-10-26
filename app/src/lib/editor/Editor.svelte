@@ -7,6 +7,7 @@
   import Icon from '../ui/Icon.svelte'
   import { attachmentActions } from './attachmentActions'
   import { editorExtensions } from './extensions'
+  import HistoryDialog from './HistoryDialog.svelte'
   import { replaceMarkdown } from './replaceMarkdown'
   import Thread from './Thread.svelte'
   import Toolbar from './Toolbar.svelte'
@@ -152,6 +153,20 @@
     }
   }
 
+  let historyOpen = $state(false)
+
+  /** Makes an earlier version current and shows it. */
+  async function restoreVersion(savedAt: number) {
+    if (!loadedId) return
+    const id = loadedId
+    await flush()
+    await api.restoreVersion(id, savedAt)
+    const note = await api.note(id)
+    if (id !== loadedId) return
+    showNewer(note)
+    app.noteSaved(id, note.title, note.updated_at)
+  }
+
   async function setLater(later: boolean, dueDate: string | null) {
     if (!loadedId || !meta) return
     const id = loadedId
@@ -246,6 +261,14 @@
             <span class="spacer"></span>
             <button
               class="later"
+              title="Earlier versions of this note"
+              onclick={() => (historyOpen = true)}
+            >
+              <Icon name="history" size={14} />
+              History
+            </button>
+            <button
+              class="later"
               class:on={meta.later_at !== null}
               aria-pressed={meta.later_at !== null}
               title={meta.later_at !== null ? 'Remove from Later' : 'Add to Later'}
@@ -281,6 +304,9 @@
     {/if}
   </div>
   <footer class:error={status === 'error'}>{statusText}</footer>
+  {#if historyOpen}
+    <HistoryDialog {noteId} onclose={() => (historyOpen = false)} onrestore={restoreVersion} />
+  {/if}
 </section>
 
 <style>

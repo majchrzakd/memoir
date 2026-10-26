@@ -5,7 +5,8 @@
 use std::sync::{Mutex, MutexGuard};
 
 use memoir_core::store::{
-    LaterItem, Note, ObjectId, Placement, Reply, SearchHit, Store, StoreError, TreeItem,
+    HistoryEntry, LaterItem, Note, ObjectId, Placement, Reply, SearchHit, Store, StoreError,
+    TreeItem,
 };
 use tauri::State;
 use tokio::sync::Notify;
@@ -203,6 +204,18 @@ pub fn set_later(
 #[tauri::command(async)]
 pub fn later_notes(state: State<'_, AppState>) -> CmdResult<Vec<LaterItem>> {
     state.with_store(|s| s.later_notes())
+}
+
+/// Earlier versions of a note (or reply) kept on this device, newest first.
+#[tauri::command(async)]
+pub fn note_history(state: State<'_, AppState>, id: ObjectId) -> CmdResult<Vec<HistoryEntry>> {
+    state.with_store(|s| s.history(&id))
+}
+
+/// Makes an earlier version current; the current text goes into history.
+#[tauri::command(async)]
+pub fn restore_version(state: State<'_, AppState>, id: ObjectId, saved_at: i64) -> CmdResult<()> {
+    state.change(|s| s.restore_version(&id, saved_at))
 }
 
 // ---- Threads ----------------------------------------------------------

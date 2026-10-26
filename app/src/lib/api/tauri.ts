@@ -34,6 +34,8 @@ export const tauriApi: Api = {
   saveNote: (id, title, body, base) =>
     invoke('save_note', { id, title, body, baseTitle: base.title, baseBody: base.body }),
   search: (query, limit) => invoke('search', { query, limit }),
+  noteHistory: (id) => invoke('note_history', { id }),
+  restoreVersion: (id, savedAt) => invoke('restore_version', { id, savedAt }),
   setLater: (id, later, dueDate) => invoke('set_later', { id, later, dueDate }),
   laterNotes: () => invoke('later_notes'),
   replies: (noteId) => invoke('replies', { noteId }),
@@ -60,6 +62,9 @@ export const tauriApi: Api = {
   openDriveNotebook: (passphrase, remember) =>
     invoke('open_drive_notebook', { passphrase, rememberKey: remember }),
   forgetDriveNotebook: () => invoke('forget_drive_notebook'),
+
+  exportNotebook: (name) => invoke('export_notebook', { name }),
+  showExport: (path) => invoke('show_export', { path }),
 
   syncStatus: () => invoke('sync_status'),
   syncNow: () => invoke('sync_now'),

@@ -19,8 +19,9 @@ is usable locally before sync exists.
 | M3 | ✅ done (plus feedback: note dates, Later list, threads) |
 | M4 | ✅ done — attachment cleanup (unreferenced files) moved to M6 |
 | M5 | ✅ done — checked against a real Drive (change feed reports deletions ~0.8 s late) |
-| M6 | ✅ done in code and in a simulation (thousands of runs) — still to check on two real machines; Windows shutdown-block reason and a sync log moved to M8 |
-| M7–M8 | not started |
+| M6 | ✅ done — simulation (thousands of runs) and two instances on a real Drive, including a conflict; Windows shutdown-block reason and a sync log moved to M8 |
+| M7 | ✅ done — export, `memoir decrypt` (tested end to end with a recovery key), history view |
+| M8 | not started |
 
 ## M0 — Foundations & spikes
 Set up the project and kill the big unknowns before building on them.

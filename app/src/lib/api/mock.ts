@@ -11,6 +11,7 @@ import {
   MAX_ATTACHMENT_SIZE,
   type Api,
   type CloudStatus,
+  type HistoryEntry,
   type SyncStatus,
   type Id,
   type Kind,
@@ -39,6 +40,7 @@ const MOCK_PASSPHRASE = 'correct horse'
 
 export function createMockApi(): Api {
   const objects = new Map<Id, Obj>()
+  const history = new Map<Id, HistoryEntry[]>()
   // Attachment id → object URL of the file.
   const attachments = new Map<string, string>()
   let lastSynced: number | null = null
@@ -353,8 +355,24 @@ export function createMockApi(): Api {
     async saveNote(id, title, body) {
       const o = get(id)
       if (o.title === title && o.body === body) return null
+      // Like the real rule, compressed: keep the old text after a 5 s pause.
+      if ((o.title || o.body) && now() - o.updated_at > 5000) {
+        const list = history.get(id) ?? []
+        list.unshift({ saved_at: o.updated_at, title: o.title, body: o.body })
+        history.set(id, list.slice(0, 50))
+      }
       Object.assign(o, { title, body, updated_at: now() })
       return null
+    },
+    async noteHistory(id) {
+      return [...(history.get(id) ?? [])]
+    },
+    async restoreVersion(id, savedAt) {
+      const version = history.get(id)?.find((v) => v.saved_at === savedAt)
+      if (!version) throw `no version ${savedAt}`
+      const o = get(id)
+      history.get(id)?.unshift({ saved_at: o.updated_at, title: o.title, body: o.body })
+      Object.assign(o, { title: version.title, body: version.body, updated_at: now() })
     },
     async search(query, limit) {
       const words = fold(query).split(/\s+/).filter(Boolean)
@@ -452,6 +470,21 @@ export function createMockApi(): Api {
     async openAttachment(id) {
       window.open(attachments.get(id), '_blank')
     },
+    async exportNotebook(name) {
+      await new Promise((r) => setTimeout(r, 600))
+      const notes = [...objects.values()].filter((o) => o.kind === 'note' && !isReply(o))
+      return {
+        path: `C:\\Users\\you\\Documents\\${name}`,
+        summary: {
+          folders: [...objects.values()].filter((o) => o.kind === 'folder').length,
+          notes: notes.length,
+          attachments: 0,
+          missing_attachments: 0,
+        },
+      }
+    },
+    async showExport() {},
+
     async syncStatus() {
       return { ...syncStatus() }
     },

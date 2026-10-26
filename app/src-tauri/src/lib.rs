@@ -1,6 +1,7 @@
 mod attachments;
 mod cloud;
 mod commands;
+mod export;
 mod session;
 mod shutdown;
 mod sync;
@@ -80,6 +81,8 @@ pub fn run() {
             commands::note,
             commands::save_note,
             commands::search,
+            commands::note_history,
+            commands::restore_version,
             commands::set_later,
             commands::later_notes,
             commands::replies,
@@ -97,6 +100,8 @@ pub fn run() {
             cloud::find_drive_notebook,
             cloud::open_drive_notebook,
             cloud::forget_drive_notebook,
+            export::export_notebook,
+            export::show_export,
             sync::sync_status,
             sync::sync_now,
         ])

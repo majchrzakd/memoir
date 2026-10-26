@@ -18,6 +18,9 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+mod folder;
+pub use folder::FolderProvider;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Area {

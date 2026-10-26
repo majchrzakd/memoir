@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { api, type CloudStatus } from './api'
+  import { api, type CloudStatus, type Exported } from './api'
   import { app, errorMessage } from './app.svelte'
-  import { sinceTime } from './time'
+  import { localDate, sinceTime } from './time'
   import Icon from './ui/Icon.svelte'
 
   let cloud = $state<CloudStatus | null>(null)
@@ -37,6 +37,28 @@
         return waiting + last
     }
   })
+
+  let exporting = $state(false)
+  let exported = $state<Exported | null>(null)
+  let exportError = $state<string | null>(null)
+
+  async function exportNotebook() {
+    exportError = null
+    exporting = true
+    try {
+      await app.flushEditor()
+      const result = await api.exportNotebook(`Memoir export ${localDate()}`)
+      if (result) exported = result
+    } catch (e) {
+      exportError = errorMessage(e)
+    } finally {
+      exporting = false
+    }
+  }
+
+  function plural(n: number, word: string) {
+    return `${n} ${word}${n === 1 ? '' : 's'}`
+  }
 
   async function connect() {
     error = null
@@ -125,6 +147,41 @@
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
   </article>
+
+  <article class="card">
+    <header>
+      <h2>Export</h2>
+    </header>
+    <p>
+      Save the whole notebook as Markdown files that any editor can open: a folder per folder, a
+      file per note (with its replies), attachments and the trash.
+    </p>
+    <p class="muted">
+      The export is not encrypted. Keep it somewhere safe, or delete it when you're done.
+    </p>
+    {#if exported}
+      {@const s = exported.summary}
+      <p>
+        Exported {plural(s.notes, 'note')}, {plural(s.folders, 'folder')} and
+        {plural(s.attachments, 'attachment')} to <code>{exported.path}</code>.
+      </p>
+      {#if s.missing_attachments}
+        <p class="muted">
+          {plural(s.missing_attachments, 'attachment')} weren't on this device yet, so their links point
+          nowhere in the export.
+        </p>
+      {/if}
+    {/if}
+    <div class="actions">
+      <button class="primary" disabled={exporting} onclick={exportNotebook}>
+        {exporting ? 'Exporting…' : 'Export to Markdown…'}
+      </button>
+      {#if exported}
+        <button onclick={() => exported && api.showExport(exported.path)}>Show in folder</button>
+      {/if}
+    </div>
+    {#if exportError}<p class="error">{exportError}</p>{/if}
+  </article>
 </section>
 
 <style>
@@ -137,6 +194,14 @@
   h1 {
     margin: 0 0 20px;
     font-size: 24px;
+  }
+
+  .card + .card {
+    margin-top: 16px;
+  }
+
+  code {
+    word-break: break-all;
   }
 
   .card {
