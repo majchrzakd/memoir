@@ -9,4 +9,5 @@ pub mod db;
 pub mod keystore;
 pub mod remote;
 pub mod store;
+pub mod sync;
 pub mod vault;

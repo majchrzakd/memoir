@@ -2,7 +2,7 @@
 // `app` and call its methods; all persistence goes through `api`.
 
 import { SvelteSet } from 'svelte/reactivity'
-import { api, type Id, type Placement, type Status, type TreeItem } from './api'
+import { api, type Id, type Placement, type Status, type SyncStatus, type TreeItem } from './api'
 import type { EditorOptions } from './editor/extensions'
 import { ancestorIds, childrenMap, visibleRows } from './tree'
 
@@ -63,6 +63,11 @@ class App {
   /** Bumped whenever the Later list may have changed. */
   laterVersion = $state(0)
 
+  sync = $state<SyncStatus>({ state: 'off', pending: 0, last_synced_at: null, message: null })
+  /** Bumped when sync brought changes from other devices; `syncedIds` says which. */
+  syncVersion = $state(0)
+  syncedIds = new Set<Id>()
+
   searchOpen = $state(false)
   confirmRequest = $state<ConfirmRequest | null>(null)
   error = $state<string | null>(null)
@@ -86,10 +91,33 @@ class App {
 
   /** Called once the vault is unlocked. */
   async enter() {
+    await this.listenToSync()
     await this.refreshTree()
     if (this.openNoteId && this.byId.get(this.openNoteId)?.kind !== 'note') this.openNoteId = null
     this.selectedId = this.openNoteId
     this.screen = 'unlocked'
+  }
+
+  private syncListening = false
+
+  private async listenToSync() {
+    if (this.syncListening) return
+    this.syncListening = true
+    await api.onSyncStatus((status) => (this.sync = status))
+    await api.onSyncChanged((ids) => void this.syncedChanges(ids))
+    this.sync = await api.syncStatus()
+  }
+
+  /** Other devices changed these notes or folders. */
+  private async syncedChanges(ids: Id[]) {
+    this.syncedIds = new Set(ids)
+    this.syncVersion++
+    this.laterChanged()
+    await this.refreshTree().catch((e) => this.fail(e))
+  }
+
+  syncNow() {
+    void api.syncNow().catch((e) => this.fail(e))
   }
 
   fail(e: unknown) {

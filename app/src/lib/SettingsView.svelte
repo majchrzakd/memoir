@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type CloudStatus } from './api'
   import { app, errorMessage } from './app.svelte'
+  import { sinceTime } from './time'
   import Icon from './ui/Icon.svelte'
 
   let cloud = $state<CloudStatus | null>(null)
@@ -17,6 +18,24 @@
         error = errorMessage(e)
       }
     })()
+  })
+
+  const syncText = $derived.by(() => {
+    const s = app.sync
+    const waiting = s.pending
+      ? `${s.pending} change${s.pending === 1 ? '' : 's'} waiting to be uploaded.`
+      : 'Everything is synced.'
+    const last = s.last_synced_at ? ` Last synced ${sinceTime(s.last_synced_at)}.` : ''
+    switch (s.state) {
+      case 'syncing':
+        return 'Syncing…'
+      case 'offline':
+        return "Can't reach Google Drive right now. Your changes are safe on this device and upload when the connection is back."
+      case 'error':
+        return s.message ?? 'Syncing failed.'
+      default:
+        return waiting + last
+    }
   })
 
   async function connect() {
@@ -79,8 +98,11 @@
         Connected as <strong>{cloud.account}</strong>. Your notebook lives in the
         <strong>Memoir</strong> folder of that Drive — encrypted, so Google can't read it.
       </p>
-      <p class="muted">Syncing notes is coming next; for now the folder is set up.</p>
+      <p class={app.sync.state === 'error' ? 'error' : 'muted'}>{syncText}</p>
       <div class="actions">
+        <button disabled={app.sync.state === 'syncing'} onclick={() => app.syncNow()}>
+          Sync now
+        </button>
         <button class="danger" disabled={busy} onclick={disconnect}>Disconnect</button>
       </div>
     {:else}

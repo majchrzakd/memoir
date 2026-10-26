@@ -116,7 +116,8 @@ struct MemoryState {
     files: BTreeMap<String, (RemoteFile, Vec<u8>)>,
     /// (sequence, file id, removed?)
     log: Vec<(u64, String, bool)>,
-    failures: VecDeque<ProviderError>,
+    /// Scripted outcomes of the next calls (`None` = succeed).
+    failures: VecDeque<Option<ProviderError>>,
     calls: u64,
 }
 
@@ -127,7 +128,23 @@ impl MemoryProvider {
 
     /// Makes the next calls fail with these errors, in order.
     pub fn fail_next(&self, errors: impl IntoIterator<Item = ProviderError>) {
-        self.state.lock().expect("lock").failures.extend(errors);
+        self.state
+            .lock()
+            .expect("lock")
+            .failures
+            .extend(errors.into_iter().map(Some));
+    }
+
+    /// Lets `skip` more calls succeed, then fails the one after with `error`.
+    pub fn fail_after(&self, skip: usize, error: ProviderError) {
+        let mut state = self.state.lock().expect("lock");
+        state.failures.extend(std::iter::repeat_n(None, skip));
+        state.failures.push_back(Some(error));
+    }
+
+    /// Drops any scripted failures that have not happened yet.
+    pub fn clear_failures(&self) {
+        self.state.lock().expect("lock").failures.clear();
     }
 
     /// Number of calls made (including failed ones).
@@ -138,7 +155,7 @@ impl MemoryProvider {
     fn begin(&self) -> Result<std::sync::MutexGuard<'_, MemoryState>> {
         let mut state = self.state.lock().expect("lock");
         state.calls += 1;
-        match state.failures.pop_front() {
+        match state.failures.pop_front().flatten() {
             Some(e) => Err(e),
             None => Ok(state),
         }

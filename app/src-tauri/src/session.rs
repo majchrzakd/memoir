@@ -69,6 +69,7 @@ pub struct Session {
     pending: Option<NewVault>,
     store: Option<Store>,
     blobs: Option<BlobStore>,
+    keys: Option<Keyring>,
 }
 
 impl Session {
@@ -85,6 +86,7 @@ impl Session {
             pending: None,
             store: None,
             blobs: None,
+            keys: None,
         };
         session.clear_opened_files();
         if let Err(e) = session.try_auto_unlock() {
@@ -115,6 +117,11 @@ impl Session {
             (Some(store), Some(blobs)) => Ok((store, blobs)),
             _ => Err(SessionError::Locked),
         }
+    }
+
+    /// The unlocked vault's keys (for sync).
+    pub fn keys(&self) -> Result<Keyring> {
+        self.keys.clone().ok_or(SessionError::Locked)
     }
 
     /// The unlocked vault's public file (`vault.json`).
@@ -181,19 +188,42 @@ impl Session {
             .pending
             .take()
             .ok_or(SessionError::WrongState("setup was not started"))?;
+        self.remove_leftovers()?;
+        let store = self.open_store(&new.file, &new.vault, true)?;
+        // Written last: its presence marks setup as complete.
+        write_atomically(&self.vault_path(), new.file.to_json().as_bytes())?;
+        self.opened(store, new.vault.keys())?;
+        Ok(())
+    }
+
+    /// Opens a notebook made on another device (its vault file, from the
+    /// cloud) on this device, which has none yet. The notes arrive by sync.
+    pub fn join(&mut self, file: &VaultFile, passphrase: &str, remember: bool) -> Result<()> {
+        if !matches!(self.status(), Status::FirstRun | Status::ConfirmRecoveryKey) {
+            return Err(SessionError::WrongState(
+                "this device already has a notebook",
+            ));
+        }
+        let vault = file.unlock(passphrase)?;
+        self.pending = None;
+        self.remove_leftovers()?;
+        let store = self.open_store(file, &vault, remember)?;
+        // Written last: its presence marks setup as complete.
+        write_atomically(&self.vault_path(), file.to_json().as_bytes())?;
+        self.opened(store, vault.keys())?;
+        Ok(())
+    }
+
+    /// A database without vault.json is from an interrupted setup and can't
+    /// be opened with a new key anyway.
+    fn remove_leftovers(&self) -> Result<()> {
         fs::create_dir_all(&self.dir)?;
-        // A database without vault.json is from an interrupted setup and
-        // can't be opened with the new key anyway.
         for leftover in [DB_FILE, "memoir.db-wal", "memoir.db-shm"] {
             let path = self.dir.join(leftover);
             if path.exists() {
                 fs::remove_file(path)?;
             }
         }
-        let store = self.open_store(&new.file, &new.vault, true)?;
-        // Written last: its presence marks setup as complete.
-        write_atomically(&self.vault_path(), new.file.to_json().as_bytes())?;
-        self.opened(store, new.vault.keys())?;
         Ok(())
     }
 
@@ -250,6 +280,7 @@ impl Session {
     fn opened(&mut self, store: Store, keys: &Keyring) -> Result<()> {
         self.blobs = Some(BlobStore::open(self.dir.join(BLOBS_DIR), keys.clone())?);
         self.store = Some(store);
+        self.keys = Some(keys.clone());
         Ok(())
     }
 
@@ -374,6 +405,44 @@ mod tests {
         // Locked: no access.
         let mut locked = session(dir.path(), &Arc::new(MemoryStore::default()));
         assert!(matches!(locked.attachments(), Err(SessionError::Locked)));
+    }
+
+    #[test]
+    fn a_second_device_joins_with_the_vault_file_and_passphrase() {
+        let first = tempfile::tempdir().unwrap();
+        let keychain = Arc::new(MemoryStore::default());
+        set_up(first.path(), &keychain);
+        let mut a = session(first.path(), &keychain);
+        let file = a.vault_file().unwrap();
+
+        let second = tempfile::tempdir().unwrap();
+        let other_keychain = Arc::new(MemoryStore::default());
+        let mut b = session(second.path(), &other_keychain);
+        assert!(matches!(
+            b.join(&file, "wrong passphrase", true),
+            Err(SessionError::Vault(_))
+        ));
+        assert_eq!(b.status(), Status::FirstRun);
+
+        b.join(&file, PASS, true).unwrap();
+        assert_eq!(b.status(), Status::Unlocked);
+        assert_eq!(b.vault_file().unwrap().vault_id, file.vault_id);
+        assert!(
+            b.store().unwrap().tree().unwrap().is_empty(),
+            "notes come by sync"
+        );
+        let device_b = b.store().unwrap().device().to_owned();
+        assert_ne!(device_b, a.store().unwrap().device());
+        assert!(matches!(
+            b.join(&file, PASS, true),
+            Err(SessionError::WrongState(_))
+        ));
+
+        // Remembered: opens unlocked next time.
+        drop(b);
+        let mut b = session(second.path(), &other_keychain);
+        assert_eq!(b.status(), Status::Unlocked);
+        assert_eq!(b.store().unwrap().device(), device_b);
     }
 
     #[test]

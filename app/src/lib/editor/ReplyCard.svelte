@@ -1,12 +1,13 @@
 <script lang="ts">
   import { Editor } from '@tiptap/core'
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { api, type Reply } from '../api'
   import { app } from '../app.svelte'
   import { fullTime, shortTime } from '../time'
   import Icon from '../ui/Icon.svelte'
   import { attachmentActions } from './attachmentActions'
   import { editorExtensions } from './extensions'
+  import { replaceMarkdown } from './replaceMarkdown'
 
   let {
     reply,
@@ -23,6 +24,9 @@
   // svelte-ignore state_referenced_locally
   let updatedAt = $state(reply.updated_at)
 
+  /** The reply as stored when last loaded or saved (see Editor.svelte). */
+  // svelte-ignore state_referenced_locally
+  let base = reply.body
   let dirty = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let queue: Promise<void> = Promise.resolve()
@@ -54,9 +58,12 @@
     queue = queue.then(async () => {
       if (!dirty || !editor) return
       dirty = false
+      const body = editor.getMarkdown()
       try {
-        await api.saveReply(reply.id, editor.getMarkdown())
+        const merged = await api.saveReply(reply.id, body, base)
+        base = body
         updatedAt = Date.now()
+        if (merged !== null) showNewer(merged)
       } catch (e) {
         dirty = true
         app.fail(e)
@@ -64,6 +71,19 @@
     })
     return queue
   }
+
+  /** Shows newer stored text unless there are unsaved edits. */
+  function showNewer(body: string) {
+    if (dirty || !editor || body === base) return
+    replaceMarkdown(editor, body)
+    base = body
+  }
+
+  // The thread reloaded (sync brought changes).
+  $effect(() => {
+    const body = reply.body
+    untrack(() => showNewer(body))
+  })
 
   function startEditing() {
     if (editing || !editor) return

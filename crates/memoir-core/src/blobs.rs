@@ -91,6 +91,41 @@ impl BlobStore {
         Ok(data)
     }
 
+    /// The encrypted file as stored (what gets uploaded to the cloud).
+    pub fn encrypted(&self, id: &str) -> Result<Vec<u8>> {
+        match fs::read(self.path(id)?) {
+            Ok(data) => Ok(data),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                Err(BlobError::NotFound(id.to_owned()))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Stores an encrypted file downloaded from the cloud, after checking
+    /// that it decrypts under its id.
+    pub fn import(&self, id: &str, encrypted: &[u8]) -> Result<()> {
+        let path = self.path(id)?;
+        blob::decrypt(&self.keys, &context(id), encrypted, io::sink())?;
+        let tmp = path.with_extension("tmp");
+        {
+            // Flushing needs a writable handle on Windows.
+            let mut out = File::create(&tmp)?;
+            out.write_all(encrypted)?;
+            out.sync_all()?;
+        }
+        fs::rename(tmp, path)?;
+        Ok(())
+    }
+
+    /// Deletes an attachment's file (missing is fine).
+    pub fn remove(&self, id: &str) -> Result<()> {
+        match fs::remove_file(self.path(id)?) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e.into()),
+            _ => Ok(()),
+        }
+    }
+
     pub fn contains(&self, id: &str) -> bool {
         self.path(id).is_ok_and(|p| p.exists())
     }
@@ -179,6 +214,31 @@ mod tests {
         fs::write(&pa, &db).unwrap();
         fs::write(&pb, &da).unwrap();
         assert!(matches!(s.read(&a), Err(BlobError::Crypto(_))));
+    }
+
+    #[test]
+    fn import_checks_and_stores_cloud_copies() {
+        let dir = tempfile::tempdir().unwrap();
+        let here = store(dir.path());
+        let id = here.put(b"attachment from another device").unwrap();
+        let encrypted = here.encrypted(&id).unwrap();
+
+        let other_dir = tempfile::tempdir().unwrap();
+        let there = store(other_dir.path());
+        there.import(&id, &encrypted).unwrap();
+        assert_eq!(there.read(&id).unwrap(), b"attachment from another device");
+
+        // Under the wrong id (or damaged), it's refused and not stored.
+        let wrong = "0".repeat(64);
+        assert!(matches!(
+            there.import(&wrong, &encrypted),
+            Err(BlobError::Crypto(_))
+        ));
+        assert!(!there.contains(&wrong));
+
+        there.remove(&id).unwrap();
+        there.remove(&id).unwrap();
+        assert!(!there.contains(&id));
     }
 
     #[test]

@@ -250,50 +250,108 @@ Memoir/                         (visible Drive folder, scope drive.file)
   blobs/<blobId>.mmr               ← immutable attachments
 ```
 
-Each revision's (encrypted) header lists its **parent revision id(s)** —
-a tiny DAG per object, like git.
+Each revision file (encrypted, context `object:<id>:<rev>`) holds
+`{v, parents, object}`: the whole object (folder, note or reply) plus the
+ids of the revisions it replaces — a tiny DAG per object, like git. The
+code is in `crates/memoir-core/src/sync/` (engine, merge rules) and
+`store/sync_state.rs` (bookkeeping tables from migration 5).
 
-- **Push**: for each outbox entry → encrypt → upload a new revision whose
-  parent = last known revision → record it as base.
-- **Pull**: `changes.list` with a stored page token (incremental, cheap) →
-  download new revisions → for each object:
-  - remote revision descends from our base, no local edits → fast-forward
-  - local edits and remote changes → **merge**, upload merged revision with
-    both parents
-- **GC**: a revision superseded by a descendant is deleted after a grace
-  period (e.g. 48 h), so a device mid-merge never loses its inputs. Any device
-  may GC.
+A sync round (`SyncEngine::sync`) is safe to interrupt anywhere; every step
+is idempotent and the next round continues:
+
+1. **Pull.** Follow the change feed from the stored cursor (a full listing
+   on first sync and once a day, which also catches anything the feed
+   missed). Index new files, download and decrypt new revisions.
+2. **Merge.** For each object with new revisions: the *heads* (revisions no
+   other revision replaces) are merged pairwise against their lowest common
+   ancestor, always in the same order, so every device computes the same
+   result. Unpushed local changes are then merged in against what they were
+   based on. A new revision is queued only if no head already says the same
+   (otherwise two devices would ping-pong merges forever).
+3. **Attachments.** Download the ones notes refer to but this device lacks.
+4. **Push.** For each outbox entry: upload its attachments first (so a
+   revision never refers to a missing file), then a new revision whose
+   parents are the heads it was based on.
+5. **Clean up** (hourly): revisions replaced more than 48 h ago are deleted
+   (ancestors first, so an interrupted clean-up never leaves an old revision
+   whose successors are gone); attachments nothing refers to any more — no
+   note, reply, history version or kept revision — are deleted after 7 days,
+   and only while nothing local is unsynced.
 
 ### Merge rules
-- Scalar fields (title, parent, sort_key, tags, trashed): last-writer-wins per
-  field (timestamp + device id tie-break).
-- Body: 3-way text merge (`diffy`) against the stored base. If it can't merge
-  cleanly: keep local, save remote as a sibling note
-  "‹title› (conflict ‹device› ‹date›)" in the same folder, flag it in the UI.
-  **Never silently drop text.**
-- Tree anomalies, resolved deterministically on every device:
-  - move cycle (A→B on one device, B→A on another) → loser moves to root
-  - note's parent folder deleted elsewhere → folder is restored (deletion of a
-    non-empty folder never wins against a concurrent addition)
+- Every field change is stamped with a clock (time + device id) in
+  `objects.clocks`. Title, position (parent + sort key), tags, trash state and
+  Later state: the latest change wins, per field. A save records only the
+  fields it actually changed, so a body edit on one device never undoes a
+  rename on another.
+- Body: 3-way text merge (`diffy`). If both sides changed the same lines, the
+  newer text stays in the note and the other is saved next to it as
+  "‹title› (conflict copy)" (a reply's copy is another reply). Its id is
+  derived from the losing text, so two devices resolving the same conflict
+  create one copy, not two. **Text is never silently dropped.**
+- Deleted for good vs. edited: an edit the deleting device never saw brings
+  the object back. "Never saw" means it differs from the common ancestor (by
+  content — a merge can bring in an older edit without moving any clock),
+  falling back to clocks when the ancestor was already cleaned up.
+- A revision whose file is gone from the cloud was cleaned up, which only
+  happens to replaced ones; it never counts as a head, even on a device that
+  never saw its replacement (e.g. one offline for longer than 48 h).
+- Tree anomalies, resolved the same way on every device:
+  - move cycle (A into B on one device, B into A on another): the folder moved
+    last goes to the top level;
+  - parent deleted elsewhere while a child was edited (so the child came
+    back): the child moves to the top level.
 
-### When sync runs
-- After edits (debounce ~3 s), on startup, on window focus, every 60 s while
-  open, and on demand.
-- Network failures/rate limits: exponential backoff with jitter; resumable
-  uploads for large blobs.
-- **On close**: window close is intercepted (`CloseRequested` →
-  `prevent_close`), window hides, outbox is flushed (timeout ~15 s), then the
-  app exits. If offline or timed out, changes stay durable in the outbox and
-  are pushed on next launch; the user gets a "N changes not yet synced" notice.
-- Windows shutdown/logoff: register a shutdown-block reason while the outbox is
-  non-empty, flush, release. Worst case, local data is still safe.
-- A **sync status indicator** is always visible: synced / pending N / offline / error.
+### Editing while sync runs
+The editor sends each save together with the version it started from
+(`save_note` → `Store::save_note_from`). If sync changed the note in the
+meantime, the store merges instead of overwriting and returns the result,
+which the editor shows (unless more typing is pending — that save merges it).
+Notes and replies changed by sync are reloaded via the `sync-changed` event
+when they have no unsaved edits.
+
+### When sync runs (app/src-tauri/src/sync.rs)
+- On startup/unlock, after connecting Drive, on window focus (at most every
+  15 s), 3 s after edits pause (at most 30 s after the first unsynced edit),
+  every 60 s, and on demand ("Sync now", or clicking the status).
+- One round at a time. Failures wait for the next minute; the provider
+  already retries transient errors with backoff.
+- **On close**: the window hides, the editor saves, and pending changes are
+  pushed (≤ 15 s). If offline or timed out they stay durable in the outbox
+  and go up on next launch.
+- The sidebar shows the status: synced / syncing / N to sync / offline /
+  sync problem (sign in again, Drive full).
+- Not yet: a Windows shutdown-block reason (M8).
+
+### A second device
+First-run screen → "Open your notebook from Google Drive": Google sign-in,
+`vault.json` is downloaded from the Memoir folder, unlocked with the
+passphrase, and a new local database is created (new device id). The notes
+then arrive with the first sync.
 
 ### Testing the sync engine
-`StorageProvider` trait with an in-memory fake that can inject latency,
-failures, partial uploads and reordering. Property-based tests (`proptest`)
-simulate several devices doing random edits, moves, deletes, crashes and
-network loss, then assert: **all devices converge, and no edited text is lost.**
+`crates/memoir-core/tests/sync_sim.rs`: three devices (each with its own
+encrypted database and attachment folder) share an in-memory provider. A
+seeded random script creates, edits (inserting a unique word on a random
+line), attaches files, renames, moves, trashes, restores, deletes for good,
+replies and syncs, while the network fails at random points — also in the
+middle of rounds. Half the runs clean up replaced revisions at once (merges
+then often lack a common ancestor). Then the network recovers and everyone
+syncs until quiet, and the test checks:
+
+- all devices hold exactly the same notebook, with nothing left unsynced;
+- every word typed is still in some note, unless the user deleted the note
+  it was in while that word was on screen;
+- nothing points at a missing parent, and every attachment a note refers to
+  is on every device;
+- a brand-new device that syncs ends up identical, without uploading anything.
+
+CI runs 30 runs × 80 steps; more with
+`MEMOIR_SIM_SEEDS=1000 MEMOIR_SIM_STEPS=150` (`MEMOIR_SIM_FIRST` picks the
+first seed, `MEMOIR_SIM_TRACE=1` prints every step). Bugs it found and fixed
+during M6: attachments from other devices failed to save on Windows
+(flushing a read-only handle), deletes winning over edits they never saw (three
+variants), and old revisions resurfacing after clean-up.
 
 ---
 

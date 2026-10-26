@@ -87,6 +87,39 @@ const MIGRATIONS: &[&str] = &[
         value  TEXT NOT NULL
     );
     "#,
+    // 5: sync. Per-field change clocks on objects (JSON: field → {at, d});
+    // what each object's local state is based on; the revisions and blobs
+    // known to exist in the cloud.
+    r#"
+    ALTER TABLE objects ADD COLUMN clocks TEXT NOT NULL DEFAULT '{}';
+
+    -- heads: JSON array of the revision ids the local state incorporates;
+    -- base: the object payload (JSON) at those heads, for 3-way merges.
+    CREATE TABLE sync_objects (
+        object_id  TEXT PRIMARY KEY,
+        heads      TEXT NOT NULL,
+        base       TEXT
+    );
+
+    -- Every object revision known in the cloud. parents/payload are filled
+    -- once downloaded; file_id is cleared when the file is gone.
+    CREATE TABLE revisions (
+        rev_id     TEXT PRIMARY KEY,
+        object_id  TEXT NOT NULL,
+        file_id    TEXT,
+        modified   INTEGER NOT NULL DEFAULT 0,
+        parents    TEXT,
+        payload    TEXT
+    );
+    CREATE INDEX revisions_by_object ON revisions (object_id);
+    CREATE INDEX revisions_by_file ON revisions (file_id);
+
+    CREATE TABLE remote_blobs (
+        blob_id   TEXT PRIMARY KEY,
+        file_id   TEXT NOT NULL,
+        modified  INTEGER NOT NULL DEFAULT 0
+    );
+    "#,
 ];
 
 pub fn migrate(conn: &mut Connection) -> Result<(), StoreError> {

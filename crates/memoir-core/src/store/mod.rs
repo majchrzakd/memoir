@@ -7,6 +7,8 @@
 
 mod schema;
 pub mod sort_key;
+mod sync_state;
+pub use sync_state::{OutboxEntry, RevisionRow, SyncObject};
 mod text;
 
 use std::collections::HashSet;
@@ -75,6 +77,14 @@ pub struct ObjectId(Ulid);
 impl ObjectId {
     pub fn generate() -> Self {
         Self(Ulid::generate())
+    }
+
+    /// An id derived from `seed`: every device computing it from the same
+    /// seed gets the same id (used for conflict copies).
+    pub fn derived(seed: &[u8]) -> Self {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(seed);
+        Self(Ulid::from_bytes(digest[..16].try_into().expect("16 bytes")))
     }
 }
 
@@ -284,6 +294,44 @@ const IS_REPLY: &str = "(o.kind = 2 AND EXISTS (
 pub struct Store {
     conn: Connection,
     clock: Box<dyn Fn() -> i64 + Send>,
+    /// This device's id; recorded with every change for merging.
+    device: String,
+}
+
+/// A part of an object that changes independently; each has its own clock
+/// (time + device of the last change), so sync can merge concurrent edits
+/// field by field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Field {
+    Title,
+    Body,
+    /// Parent and position (`parent_id` + `sort_key`).
+    Parent,
+    Tags,
+    Trashed,
+    Later,
+}
+
+impl Field {
+    pub(crate) const ALL: &'static [Field] = &[
+        Field::Title,
+        Field::Body,
+        Field::Parent,
+        Field::Tags,
+        Field::Trashed,
+        Field::Later,
+    ];
+
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Field::Title => "title",
+            Field::Body => "body",
+            Field::Parent => "parent",
+            Field::Tags => "tags",
+            Field::Trashed => "trashed",
+            Field::Later => "later",
+        }
+    }
 }
 
 impl Store {
@@ -293,7 +341,7 @@ impl Store {
         // Every committed change is on disk before the call returns.
         conn.pragma_update(None, "synchronous", "FULL")?;
         schema::migrate(&mut conn)?;
-        let store = Self {
+        let mut store = Self {
             conn,
             clock: Box::new(|| {
                 SystemTime::now()
@@ -301,8 +349,9 @@ impl Store {
                     .expect("clock after 1970")
                     .as_millis() as i64
             }),
+            device: String::new(),
         };
-        store.device_id()?;
+        store.device = store.device_id()?;
         Ok(store)
     }
 
@@ -373,6 +422,14 @@ impl Store {
     }
 
     // ---- Tree ---------------------------------------------------------
+
+    /// Turns waiting for the disk on each commit off (`false`) or back on.
+    /// Only for tests and bulk work where a crash can simply be redone.
+    pub fn set_durable(&self, durable: bool) -> Result<()> {
+        let mode = if durable { "FULL" } else { "OFF" };
+        self.conn.pragma_update(None, "synchronous", mode)?;
+        Ok(())
+    }
 
     /// Every folder and note not in the trash (replies excluded), ordered by
     /// parent, then folders before notes, then position.
@@ -450,7 +507,7 @@ impl Store {
             )?;
             index_note(&tx, &id)?;
         }
-        enqueue(&tx, &id, now)?;
+        changed(&tx, &id, now, &self.device, Field::ALL)?;
         tx.commit()?;
         Ok(id)
     }
@@ -464,15 +521,15 @@ impl Store {
         };
         let now = self.now();
         let tx = self.conn.transaction()?;
-        let changed = tx.execute(
+        let updated = tx.execute(
             "UPDATE objects SET title = ?2, updated_at = ?3 WHERE id = ?1 AND title != ?2",
             params![id, title, now],
         )?;
-        if changed > 0 {
+        if updated > 0 {
             if kind == Kind::Note {
                 index_note(&tx, id)?;
             }
-            enqueue(&tx, id, now)?;
+            changed(&tx, id, now, &self.device, &[Field::Title])?;
         }
         tx.commit()?;
         Ok(())
@@ -487,7 +544,7 @@ impl Store {
             "UPDATE objects SET parent_id = ?2, sort_key = ?3 WHERE id = ?1",
             params![id, placement.parent, sort_key],
         )?;
-        enqueue(&tx, id, now)?;
+        changed(&tx, id, now, &self.device, &[Field::Parent])?;
         tx.commit()?;
         Ok(())
     }
@@ -497,12 +554,12 @@ impl Store {
         let now = self.now();
         let tx = self.conn.transaction()?;
         reject_reply(&tx, id)?;
-        let changed = tx.execute(
+        let updated = tx.execute(
             "UPDATE objects SET trashed_at = ?2 WHERE id = ?1 AND trashed_at IS NULL",
             params![id, now],
         )?;
-        if changed > 0 {
-            enqueue(&tx, id, now)?;
+        if updated > 0 {
+            changed(&tx, id, now, &self.device, &[Field::Trashed])?;
         }
         tx.commit()?;
         Ok(())
@@ -541,7 +598,7 @@ impl Store {
                 params![id, sort_key],
             )?;
         }
-        enqueue(&tx, id, now)?;
+        changed(&tx, id, now, &self.device, &[Field::Trashed, Field::Parent])?;
         tx.commit()?;
         Ok(())
     }
@@ -648,9 +705,73 @@ impl Store {
             params![id, body],
         )?;
         index_note(&tx, id)?;
-        enqueue(&tx, id, now)?;
+        // Only what changed: a body edit here must not undo a rename made
+        // on another device in the meantime.
+        let fields: Vec<Field> = [
+            (old.title != title, Field::Title),
+            (old.body != body, Field::Body),
+        ]
+        .into_iter()
+        .filter_map(|(differs, field)| differs.then_some(field))
+        .collect();
+        changed(&tx, id, now, &self.device, &fields)?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Saves what an editor shows, given the version it was showing before
+    /// (`base_title`, `base_body`). If the note changed underneath (sync
+    /// brought another device's edits), the editor's changes are merged
+    /// into it instead of overwriting it, and the merged note is returned
+    /// so the editor can show it. When both changed the same lines, the
+    /// editor's text is kept and the other version is saved next to it as a
+    /// conflict copy.
+    pub fn save_note_from(
+        &mut self,
+        id: &ObjectId,
+        base_title: &str,
+        base_body: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<Option<Note>> {
+        let current = self.note(id)?;
+        if current.title == base_title && current.body == base_body {
+            self.save_note(id, title, body)?;
+            return Ok(None);
+        }
+        let title = if title == base_title {
+            current.title.clone()
+        } else {
+            title.to_owned()
+        };
+        let body = if body == base_body {
+            current.body.clone()
+        } else if current.body == base_body {
+            body.to_owned()
+        } else {
+            match diffy::merge(base_body, &current.body, body) {
+                Ok(merged) => merged,
+                Err(_) => {
+                    self.save_conflict_copy(&current)?;
+                    body.to_owned()
+                }
+            }
+        };
+        self.save_note(id, &title, &body)?;
+        Ok(Some(self.note(id)?))
+    }
+
+    fn save_conflict_copy(&mut self, note: &Note) -> Result<ObjectId> {
+        if is_reply(&self.conn, &note.id)? {
+            let parent = note.parent_id.expect("replies have a parent");
+            return self.add_reply(&parent, &note.body);
+        }
+        let title = if note.title.trim().is_empty() {
+            "Conflict copy".to_owned()
+        } else {
+            format!("{} (conflict copy)", note.title)
+        };
+        self.create_note(Placement::last_in(note.parent_id), &title, &note.body)
     }
 
     /// Replaces a note's tags (trimmed, empty ones dropped, de-duplicated
@@ -677,7 +798,7 @@ impl Store {
             ],
         )?;
         index_note(&tx, id)?;
-        enqueue(&tx, id, now)?;
+        changed(&tx, id, now, &self.device, &[Field::Tags])?;
         tx.commit()?;
         Ok(())
     }
@@ -702,7 +823,7 @@ impl Store {
             "UPDATE objects SET later_at = ?2, due_date = ?3 WHERE id = ?1",
             params![id, later_at, due_date],
         )?;
-        enqueue(&tx, id, now)?;
+        changed(&tx, id, now, &self.device, &[Field::Later])?;
         tx.commit()?;
         Ok(())
     }
@@ -844,7 +965,7 @@ impl Store {
             params![tx.last_insert_rowid(), body],
         )?;
         index_note(&tx, &id)?;
-        enqueue(&tx, &id, now)?;
+        changed(&tx, &id, now, &self.device, Field::ALL)?;
         tx.commit()?;
         Ok(id)
     }
@@ -1092,9 +1213,33 @@ fn place(tx: &Transaction<'_>, placement: Placement, moving: Option<&ObjectId>) 
     })
 }
 
+/// Records which fields changed (time + device) and queues the object for sync.
+fn changed(
+    tx: &Transaction<'_>,
+    id: &ObjectId,
+    now: i64,
+    device: &str,
+    fields: &[Field],
+) -> Result<()> {
+    for field in fields {
+        tx.execute(
+            &format!(
+                "UPDATE objects SET clocks = json_set(clocks, '$.{}', json_object('at', ?2, 'd', ?3))
+                 WHERE id = ?1",
+                field.key()
+            ),
+            params![id, now, device],
+        )?;
+    }
+    enqueue(tx, id, now)
+}
+
+/// Queues an object for sync. `queued_at` only ever grows, so sync can tell
+/// whether an object changed again while it was being uploaded.
 fn enqueue(tx: &Transaction<'_>, id: &ObjectId, now: i64) -> Result<()> {
     tx.execute(
-        "INSERT OR REPLACE INTO outbox (object_id, queued_at) VALUES (?1, ?2)",
+        "INSERT INTO outbox (object_id, queued_at) VALUES (?1, ?2)
+         ON CONFLICT (object_id) DO UPDATE SET queued_at = max(queued_at + 1, excluded.queued_at)",
         params![id, now],
     )?;
     Ok(())

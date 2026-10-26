@@ -29,6 +29,11 @@ The app keeps its data in `%LOCALAPPDATA%\com.memoir.notebook` (`vault.json`,
 under `com.memoir.notebook`. Development builds can use another folder by setting
 `MEMOIR_DATA_DIR` (handy for testing without touching your notebook).
 
+To try sync with a "second device" on one machine, run another development
+instance with its own data folder, choose **Open your notebook from Google
+Drive** on its first screen, and edit in both windows. The two instances share
+the Credential Manager entries (same notebook), which is harmless.
+
 Layout:
 
 | Path | What |

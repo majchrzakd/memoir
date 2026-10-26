@@ -1,20 +1,22 @@
 //! The Google Drive connection: connect (browser sign-in), check, disconnect,
-//! and restoring the connection when the vault unlocks.
+//! restoring the connection when the vault unlocks, and opening a notebook
+//! that's already in Drive on a new device.
 //!
 //! The OAuth client (from Google Cloud Console, see docs/spikes/google-oauth.md)
 //! is taken from `MEMOIR_GOOGLE_CLIENT_ID` / `MEMOIR_GOOGLE_CLIENT_SECRET`,
 //! at build time or (for development) at run time.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use memoir_core::remote::{Area, ProviderError, StorageProvider};
 use memoir_core::vault::VaultFile;
 use memoir_gdrive::{DriveConfig, DriveProvider, Folders, OAuthConfig, OAuthError, oauth};
 use serde::Serialize;
-use tauri::{AppHandle, Runtime, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Notify;
+use zeroize::Zeroizing;
 
 use crate::commands::AppState;
 
@@ -33,10 +35,25 @@ pub struct Cloud {
     provider: RwLock<Option<Arc<DriveProvider>>>,
     cancel: Notify,
     connecting: AtomicBool,
+    /// Signed in on a new device, notebook found, waiting for the passphrase.
+    joining: Mutex<Option<Joining>>,
+}
+
+/// A Google sign-in with the Memoir folder set up.
+struct SignedIn {
+    provider: DriveProvider,
+    folders: Folders,
+    account: String,
+    refresh_token: Zeroizing<String>,
+}
+
+struct Joining {
+    signed_in: SignedIn,
+    vault: VaultFile,
 }
 
 impl Cloud {
-    /// The connected provider, if any (used by sync in M6).
+    /// The connected provider, if any.
     pub fn provider(&self) -> Option<Arc<DriveProvider>> {
         self.provider.read().expect("lock").clone()
     }
@@ -140,6 +157,9 @@ pub async fn connect_drive<R: Runtime>(
     }
     let result = connect(&app, &state, config).await;
     state.cloud.connecting.store(false, Ordering::SeqCst);
+    if result.is_ok() {
+        state.sync.now();
+    }
     result.map(|()| status(&state, None))
 }
 
@@ -151,7 +171,36 @@ async fn connect<R: Runtime>(
     let local_vault = state
         .session()
         .and_then(|s| s.vault_file().map_err(|e| e.to_string()))?;
+    let signed_in = sign_in(app, state, config).await?;
 
+    // One notebook per Drive: refuse a Drive that holds a different one.
+    match remote_vault(&signed_in.provider).await? {
+        Some(remote) if remote.vault_id != local_vault.vault_id => {
+            let _ = signed_in.provider.revoke().await;
+            return Err(format!(
+                "The Memoir folder in {} already holds a different notebook. Use another Google \
+                 account, or remove that Memoir folder from Drive.",
+                signed_in.account
+            ));
+        }
+        Some(_) => {}
+        None => {
+            signed_in
+                .provider
+                .upload(Area::Root, VAULT_FILE, local_vault.to_json().into_bytes())
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    remember(state, signed_in)
+}
+
+/// Browser sign-in, then finds (or creates) the Memoir folder.
+async fn sign_in<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &AppState,
+    config: OAuthConfig,
+) -> Result<SignedIn, String> {
     let http = reqwest::Client::new();
     let sign_in = oauth::sign_in(
         &config,
@@ -172,57 +221,132 @@ async fn connect<R: Runtime>(
     let provider = DriveProvider::new(DriveConfig::google(config), sign_in.refresh_token.clone());
     let folders = provider.ensure_folders().await.map_err(|e| e.to_string())?;
     let account = provider.account().await.map_err(|e| e.to_string())?;
+    Ok(SignedIn {
+        provider: provider.with_folders(folders.clone()),
+        folders,
+        account: account.email,
+        refresh_token: Zeroizing::new(sign_in.refresh_token.to_string()),
+    })
+}
 
-    // One notebook per Drive: refuse a Drive that holds a different one.
-    let remote_vaults: Vec<_> = provider
-        .list(Area::Root)
+/// The notebook's vault file in Drive, if there is one.
+async fn remote_vault(provider: &DriveProvider) -> Result<Option<VaultFile>, String> {
+    let files = provider.list(Area::Root).await.map_err(|e| e.to_string())?;
+    let Some(file) = files.into_iter().find(|f| f.name == VAULT_FILE) else {
+        return Ok(None);
+    };
+    let json = provider
+        .download(&file.id)
         .await
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .filter(|f| f.name == VAULT_FILE)
-        .collect();
-    if let Some(existing) = remote_vaults.first() {
-        let json = provider
-            .download(&existing.id)
-            .await
-            .map_err(|e| e.to_string())?;
-        let remote =
-            VaultFile::from_json(&String::from_utf8_lossy(&json)).map_err(|e| e.to_string())?;
-        if remote.vault_id != local_vault.vault_id {
-            let _ = provider.revoke().await;
-            return Err(format!(
-                "The Memoir folder in {} already holds a different notebook. Opening an existing \
-                 notebook on a new device comes with sync; for now, use another Google account or \
-                 remove that Memoir folder from Drive.",
-                account.email
-            ));
-        }
-    } else {
-        provider
-            .upload(Area::Root, VAULT_FILE, local_vault.to_json().into_bytes())
-            .await
-            .map_err(|e| e.to_string())?;
-    }
+        .map_err(|e| e.to_string())?;
+    VaultFile::from_json(&String::from_utf8_lossy(&json))
+        .map(Some)
+        .map_err(|e| format!("The notebook file in Drive can't be read: {e}"))
+}
 
+/// Saves the sign-in for this (unlocked) notebook and starts using it.
+fn remember(state: &AppState, signed_in: SignedIn) -> Result<(), String> {
     {
         let mut session = state.session()?;
         session
-            .set_cloud_token(&sign_in.refresh_token)
+            .set_cloud_token(&signed_in.refresh_token)
             .map_err(|e| e.to_string())?;
-        let folders_json = serde_json::to_string(&folders).expect("folders serialize");
+        let folders_json = serde_json::to_string(&signed_in.folders).expect("folders serialize");
         session
             .store()
             .and_then(|s| {
                 s.set_remote_values(&[
                     (key::PROVIDER, PROVIDER),
-                    (key::ACCOUNT, &account.email),
+                    (key::ACCOUNT, &signed_in.account),
                     (key::FOLDERS, &folders_json),
                 ])
                 .map_err(Into::into)
             })
             .map_err(|e| e.to_string())?;
     }
-    state.cloud.set(Some(provider.with_folders(folders)));
+    state.cloud.set(Some(signed_in.provider));
+    Ok(())
+}
+
+/// New device, step 1: sign in and find the notebook in Drive. Returns the
+/// Google account it was found in.
+#[tauri::command]
+pub async fn find_drive_notebook<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let config = oauth_config().ok_or("this build has no Google client configured")?;
+    if state.cloud.connecting.swap(true, Ordering::SeqCst) {
+        return Err("already connecting".into());
+    }
+    let result = async {
+        let signed_in = sign_in(&app, &state, config).await?;
+        match remote_vault(&signed_in.provider).await? {
+            Some(vault) => Ok(Joining { signed_in, vault }),
+            None => {
+                let account = signed_in.account.clone();
+                let _ = signed_in.provider.revoke().await;
+                Err(format!(
+                    "There's no Memoir notebook in the Google Drive of {account}. Sign in with \
+                     the account your notebook is in, or create a new notebook."
+                ))
+            }
+        }
+    }
+    .await;
+    state.cloud.connecting.store(false, Ordering::SeqCst);
+    let joining = result?;
+    let account = joining.signed_in.account.clone();
+    *state.cloud.joining.lock().expect("lock") = Some(joining);
+    Ok(account)
+}
+
+/// New device, step 2: unlock the notebook found in step 1 with its
+/// passphrase. Its notes then arrive by sync.
+#[tauri::command]
+pub async fn open_drive_notebook<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppState>,
+    passphrase: String,
+    remember_key: bool,
+) -> Result<(), String> {
+    let joining = state
+        .cloud
+        .joining
+        .lock()
+        .expect("lock")
+        .take()
+        .ok_or("sign in to Google first")?;
+    // Unlocking takes a moment (key derivation); keep it off the async threads.
+    let vault = joining.vault.clone();
+    let passphrase = Zeroizing::new(passphrase);
+    let handle = app.clone();
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        handle
+            .state::<AppState>()
+            .session()?
+            .join(&vault, &passphrase, remember_key)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    if let Err(e) = joined {
+        // Wrong passphrase: keep the sign-in for another try.
+        *state.cloud.joining.lock().expect("lock") = Some(joining);
+        return Err(e);
+    }
+    remember(&state, joining.signed_in)?;
+    state.sync.now();
+    Ok(())
+}
+
+/// New device: gives up on the notebook found in Drive.
+#[tauri::command]
+pub async fn forget_drive_notebook(state: State<'_, AppState>) -> Result<(), String> {
+    let joining = state.cloud.joining.lock().expect("lock").take();
+    if let Some(j) = joining {
+        let _ = j.signed_in.provider.revoke().await;
+    }
     Ok(())
 }
 
@@ -241,6 +365,7 @@ pub async fn disconnect_drive(state: State<'_, AppState>) -> Result<CloudStatus,
         log::warn!("could not revoke the Google token: {e}");
     }
     state.cloud.set(None);
+    state.sync.now(); // reports "off"
     {
         let mut session = state.session()?;
         session.forget_cloud_token().map_err(|e| e.to_string())?;

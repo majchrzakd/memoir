@@ -11,6 +11,7 @@ import {
   MAX_ATTACHMENT_SIZE,
   type Api,
   type CloudStatus,
+  type SyncStatus,
   type Id,
   type Kind,
   type Note,
@@ -40,6 +41,15 @@ export function createMockApi(): Api {
   const objects = new Map<Id, Obj>()
   // Attachment id → object URL of the file.
   const attachments = new Map<string, string>()
+  let lastSynced: number | null = null
+  const syncListeners = new Set<(s: SyncStatus) => void>()
+  const syncStatus = (): SyncStatus => ({
+    state: cloud.connected ? 'idle' : 'off',
+    pending: 0,
+    last_synced_at: cloud.connected ? lastSynced : null,
+    message: null,
+  })
+
   const cloud: CloudStatus = {
     configured: true,
     connected: false,
@@ -342,8 +352,9 @@ export function createMockApi(): Api {
     },
     async saveNote(id, title, body) {
       const o = get(id)
-      if (o.title === title && o.body === body) return
+      if (o.title === title && o.body === body) return null
       Object.assign(o, { title, body, updated_at: now() })
+      return null
     },
     async search(query, limit) {
       const words = fold(query).split(/\s+/).filter(Boolean)
@@ -420,7 +431,8 @@ export function createMockApi(): Api {
       return insertReply(noteId, body, now())
     },
     async saveReply(id, body) {
-      await api.saveNote(id, '', body)
+      await api.saveNote(id, '', body, { title: '', body })
+      return null
     },
     async deleteReply(id) {
       if (!isReply(get(id))) throw `${id} is not a reply`
@@ -440,6 +452,26 @@ export function createMockApi(): Api {
     async openAttachment(id) {
       window.open(attachments.get(id), '_blank')
     },
+    async syncStatus() {
+      return { ...syncStatus() }
+    },
+    async syncNow() {
+      if (!cloud.connected) return
+      const emit = (s: SyncStatus) => syncListeners.forEach((l) => l(s))
+      emit({ ...syncStatus(), state: 'syncing' })
+      setTimeout(() => {
+        lastSynced = now()
+        emit(syncStatus())
+      }, 700)
+    },
+    async onSyncStatus(handler) {
+      syncListeners.add(handler)
+      return () => syncListeners.delete(handler)
+    },
+    async onSyncChanged() {
+      return () => {}
+    },
+
     async cloudStatus() {
       return { ...cloud }
     },
@@ -456,13 +488,29 @@ export function createMockApi(): Api {
         }
       }).finally(() => (cloud.connecting = false))
       Object.assign(cloud, { connected: true, account: 'you@example.com', problem: null })
+      void api.syncNow()
       return { ...cloud }
     },
+    async findDriveNotebook() {
+      await api
+        .connectDrive()
+        .finally(() => Object.assign(cloud, { connected: false, account: null }))
+      return 'you@example.com'
+    },
+    async openDriveNotebook(passphrase) {
+      if (passphrase !== MOCK_PASSPHRASE) throw 'wrong passphrase'
+      seed()
+      status = 'unlocked'
+      Object.assign(cloud, { connected: true, account: 'you@example.com', problem: null })
+      void api.syncNow()
+    },
+    async forgetDriveNotebook() {},
     async cancelConnect() {
       cancelConnect()
     },
     async disconnectDrive() {
       Object.assign(cloud, { connected: false, account: null })
+      syncListeners.forEach((l) => l(syncStatus()))
       return { ...cloud }
     },
     async saveAttachment(id, name) {

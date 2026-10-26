@@ -3,6 +3,7 @@ mod cloud;
 mod commands;
 mod session;
 mod shutdown;
+mod sync;
 
 use memoir_core::keystore::OsKeychain;
 use tauri::{Manager, WindowEvent};
@@ -43,16 +44,21 @@ pub fn run() {
             app.manage(AppState {
                 session: std::sync::Mutex::new(session),
                 cloud: cloud::Cloud::default(),
+                sync: sync::Sync::default(),
                 editor_flushed: Notify::new(),
             });
             cloud::restore(&app.state::<AppState>());
+            sync::start(app.handle());
+            app.state::<AppState>().sync.now();
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 shutdown::on_close_requested(window);
             }
+            WindowEvent::Focused(true) => window.state::<AppState>().sync.focused(),
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::status,
@@ -88,6 +94,11 @@ pub fn run() {
             cloud::connect_drive,
             cloud::cancel_connect,
             cloud::disconnect_drive,
+            cloud::find_drive_notebook,
+            cloud::open_drive_notebook,
+            cloud::forget_drive_notebook,
+            sync::sync_status,
+            sync::sync_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Memoir");

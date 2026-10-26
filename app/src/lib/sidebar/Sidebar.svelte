@@ -3,6 +3,7 @@
   import { app } from '../app.svelte'
   import Icon from '../ui/Icon.svelte'
   import LaterList from './LaterList.svelte'
+  import SyncIndicator from './SyncIndicator.svelte'
   import Tree from './Tree.svelte'
 
   let later = $state.raw<LaterItem[]>([])
@@ -64,6 +65,7 @@
       <Icon name="trash" />
       <span>Trash</span>
     </button>
+    <SyncIndicator />
     <button
       class="icon"
       class:active={app.view === 'settings'}
@@ -176,8 +178,9 @@
   .trash {
     display: flex;
     align-items: center;
+    flex: 1;
     gap: 8px;
-    width: 100%;
+    min-width: 0;
     padding: 6px 10px;
     border: none;
     background: none;

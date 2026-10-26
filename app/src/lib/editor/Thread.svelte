@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import { api, type Id, type Reply } from '../api'
   import { app } from '../app.svelte'
   import Composer from './Composer.svelte'
@@ -19,6 +19,21 @@
     } catch (e) {
       app.fail(e)
     }
+  })
+
+  // Other devices may have added, changed or deleted replies.
+  let seenSyncVersion = app.syncVersion
+  $effect(() => {
+    const version = app.syncVersion
+    untrack(async () => {
+      if (version === seenSyncVersion || !loaded) return
+      seenSyncVersion = version
+      try {
+        replies = await api.replies(noteId)
+      } catch {
+        // The note itself is gone; the editor handles that.
+      }
+    })
   })
 
   // Scroll to a reply chosen in search (also when the note was already open).

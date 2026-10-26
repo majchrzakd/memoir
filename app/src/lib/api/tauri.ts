@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { Api } from './types'
+import type { Api, Id, SyncStatus } from './types'
 
 /** The real backend: Tauri commands (app/src-tauri/src/commands.rs). */
 export const tauriApi: Api = {
@@ -31,13 +31,14 @@ export const tauriApi: Api = {
   emptyTrash: () => invoke('empty_trash'),
 
   note: (id) => invoke('note', { id }),
-  saveNote: (id, title, body) => invoke('save_note', { id, title, body }),
+  saveNote: (id, title, body, base) =>
+    invoke('save_note', { id, title, body, baseTitle: base.title, baseBody: base.body }),
   search: (query, limit) => invoke('search', { query, limit }),
   setLater: (id, later, dueDate) => invoke('set_later', { id, later, dueDate }),
   laterNotes: () => invoke('later_notes'),
   replies: (noteId) => invoke('replies', { noteId }),
   addReply: (noteId, body) => invoke('add_reply', { noteId, body }),
-  saveReply: (id, body) => invoke('save_reply', { id, body }),
+  saveReply: (id, body, baseBody) => invoke('save_reply', { id, body, baseBody }),
   deleteReply: (id) => invoke('delete_reply', { id }),
 
   // The file goes over IPC as raw bytes, not JSON.
@@ -55,4 +56,13 @@ export const tauriApi: Api = {
   connectDrive: () => invoke('connect_drive'),
   cancelConnect: () => invoke('cancel_connect'),
   disconnectDrive: () => invoke('disconnect_drive'),
+  findDriveNotebook: () => invoke('find_drive_notebook'),
+  openDriveNotebook: (passphrase, remember) =>
+    invoke('open_drive_notebook', { passphrase, rememberKey: remember }),
+  forgetDriveNotebook: () => invoke('forget_drive_notebook'),
+
+  syncStatus: () => invoke('sync_status'),
+  syncNow: () => invoke('sync_now'),
+  onSyncStatus: (handler) => listen<SyncStatus>('sync-status', (e) => handler(e.payload)),
+  onSyncChanged: (handler) => listen<Id[]>('sync-changed', (e) => handler(e.payload)),
 }

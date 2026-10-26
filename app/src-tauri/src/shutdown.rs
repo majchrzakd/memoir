@@ -48,7 +48,7 @@ pub fn on_close_requested<R: Runtime>(window: &Window<R>) {
         }
 
         log::info!("shutdown: flushing pending changes");
-        match tokio::time::timeout(SYNC_FLUSH_TIMEOUT, flush_outbox()).await {
+        match tokio::time::timeout(SYNC_FLUSH_TIMEOUT, crate::sync::flush(&app)).await {
             Ok(()) => log::info!("shutdown: done in {:?}", started.elapsed()),
             Err(_) => log::warn!(
                 "shutdown: sync timed out after {SYNC_FLUSH_TIMEOUT:?}; remaining changes stay queued"
@@ -61,7 +61,3 @@ pub fn on_close_requested<R: Runtime>(window: &Window<R>) {
         app.exit(0);
     });
 }
-
-/// Pushes the sync outbox. The sync engine arrives in M6; until then there
-/// is nothing to push.
-async fn flush_outbox() {}

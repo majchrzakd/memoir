@@ -3,6 +3,7 @@
   import { app, errorMessage } from '../app.svelte'
   import Icon from '../ui/Icon.svelte'
   import { focusOnMount } from '../ui/focus'
+  import JoinFromDrive from './JoinFromDrive.svelte'
 
   let passphrase = $state('')
   let repeat = $state('')
@@ -11,6 +12,16 @@
   let recoveryKey = $state<string | null>(null)
   let saved = $state(false)
   let copied = $state(false)
+  /** Make a new notebook, or open one that's in Google Drive already. */
+  let mode = $state<'create' | 'join'>('create')
+  let canJoin = $state(false)
+
+  $effect(() => {
+    api
+      .cloudStatus()
+      .then((c) => (canJoin = c.configured))
+      .catch(() => {})
+  })
 
   const length = $derived([...passphrase].length)
   const strength = $derived(
@@ -54,7 +65,9 @@
 </script>
 
 <main class="screen">
-  {#if !recoveryKey}
+  {#if mode === 'join'}
+    <JoinFromDrive onback={() => (mode = 'create')} />
+  {:else if !recoveryKey}
     <form class="card" onsubmit={create}>
       <h1>Create your notebook</h1>
       <p class="muted">
@@ -83,6 +96,15 @@
       <button class="primary" type="submit" disabled={busy}>
         {busy ? 'Creating…' : 'Continue'}
       </button>
+
+      {#if canJoin}
+        <p class="other">
+          Already use Memoir on another computer?
+          <button type="button" class="link" onclick={() => (mode = 'join')}>
+            Open your notebook from Google Drive
+          </button>
+        </p>
+      {/if}
     </form>
   {:else}
     <section class="card">
@@ -183,5 +205,26 @@
 
   button.primary {
     align-self: flex-start;
+  }
+
+  .other {
+    margin-top: 8px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  .link {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent);
+    font-size: inherit;
+  }
+
+  .link:hover {
+    background: none;
+    text-decoration: underline;
   }
 </style>

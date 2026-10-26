@@ -1,12 +1,13 @@
 <script lang="ts">
   import { Editor } from '@tiptap/core'
-  import { onMount } from 'svelte'
-  import { api, type Id, type Note } from '../api'
+  import { onMount, untrack } from 'svelte'
+  import { api, type Id, type Note, type NoteText } from '../api'
   import { app } from '../app.svelte'
   import { fullTime, sinceTime } from '../time'
   import Icon from '../ui/Icon.svelte'
   import { attachmentActions } from './attachmentActions'
   import { editorExtensions } from './extensions'
+  import { replaceMarkdown } from './replaceMarkdown'
   import Thread from './Thread.svelte'
   import Toolbar from './Toolbar.svelte'
   import './prose.css'
@@ -35,6 +36,9 @@
   let thread = $state<Thread>()
 
   let loadedId: Id | null = null
+  /** The note as stored when the editor last loaded or saved it. Sent with
+   * each save, so changes synced in meanwhile are merged, not overwritten. */
+  let base: NoteText = { title: '', body: '' }
   let dirty = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let queue: Promise<void> = Promise.resolve()
@@ -58,10 +62,12 @@
       const body = editor.getMarkdown()
       status = 'saving'
       try {
-        await api.saveNote(id, savedTitle, body)
+        const merged = await api.saveNote(id, savedTitle, body, base)
+        base = { title: savedTitle, body }
         const savedAt = Date.now()
         if (meta && id === loadedId) meta.updated_at = savedAt
-        app.noteSaved(id, savedTitle, savedAt)
+        if (merged && id === loadedId) showNewer(merged)
+        app.noteSaved(id, merged?.title ?? savedTitle, savedAt)
         if (!dirty) status = 'saved'
       } catch (e) {
         dirty = true
@@ -71,6 +77,46 @@
     })
     return queue
   }
+
+  /** Shows a newer stored version (merged with another device's changes),
+   * unless there are edits not saved yet: their save merges it in. */
+  function showNewer(note: Note) {
+    if (dirty || !editor) return
+    if (note.title !== base.title) title = note.title
+    if (note.body !== base.body) replaceMarkdown(editor, note.body)
+    base = { title: note.title, body: note.body }
+    if (meta) {
+      meta.updated_at = note.updated_at
+      meta.later_at = note.later_at
+      meta.due_date = note.due_date
+    }
+  }
+
+  /** Another device changed the open note. */
+  async function syncedChange(id: Id) {
+    await flush()
+    if (id !== loadedId) return
+    try {
+      const note = await api.note(id)
+      if (id === loadedId) showNewer(note)
+    } catch {
+      // Deleted for good on another device.
+      if (id === loadedId && !app.byId.has(id)) {
+        app.openNoteId = null
+        app.fail('This note was deleted on another device.')
+      }
+    }
+  }
+
+  let seenSyncVersion = app.syncVersion
+  $effect(() => {
+    const version = app.syncVersion
+    untrack(() => {
+      if (version === seenSyncVersion) return
+      seenSyncVersion = version
+      if (loadedId && app.syncedIds.has(loadedId)) void syncedChange(loadedId)
+    })
+  })
 
   async function load(id: Id) {
     await flush()
@@ -82,6 +128,7 @@
       editor?.destroy()
       loadError = null
       title = note.title
+      base = { title: note.title, body: note.body }
       meta = {
         created_at: note.created_at,
         updated_at: note.updated_at,

@@ -708,3 +708,123 @@ fn remote_state_is_stored_and_cleared() {
     f.store.clear_remote_state().unwrap();
     assert_eq!(f.store.remote_value("provider").unwrap(), None);
 }
+
+#[test]
+fn saving_from_an_editor_merges_changes_made_underneath() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let id = s
+        .create_note(last(None), "Plan", "one\ntwo\nthree\n")
+        .unwrap();
+
+    // Nothing changed underneath: a plain save.
+    let r = s
+        .save_note_from(
+            &id,
+            "Plan",
+            "one\ntwo\nthree\n",
+            "Plan",
+            "one\ntwo\nthree\nfour\n",
+        )
+        .unwrap();
+    assert!(r.is_none());
+
+    // Sync renamed it and changed the first line while the editor (still
+    // showing the old version) added a line at the end.
+    s.save_note(&id, "Plan B", "ONE\ntwo\nthree\nfour\n")
+        .unwrap();
+    let merged = s
+        .save_note_from(
+            &id,
+            "Plan",
+            "one\ntwo\nthree\nfour\n",
+            "Plan",
+            "one\ntwo\nthree\nfour\nfive\n",
+        )
+        .unwrap()
+        .expect("merged");
+    assert_eq!(merged.title, "Plan B", "the editor didn't touch the title");
+    assert_eq!(merged.body, "ONE\ntwo\nthree\nfour\nfive\n");
+    assert_eq!(s.note(&id).unwrap().body, merged.body);
+}
+
+#[test]
+fn saving_from_an_editor_keeps_both_versions_on_conflict() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let folder = s.create_folder(last(None), "F").unwrap();
+    let id = s
+        .create_note(last(Some(folder)), "Plan", "same line\n")
+        .unwrap();
+    let reply = s.add_reply(&id, "reply\n").unwrap();
+
+    s.save_note(&id, "Plan", "their line\n").unwrap();
+    let kept = s
+        .save_note_from(&id, "Plan", "same line\n", "Plan", "my line\n")
+        .unwrap()
+        .expect("changed");
+    assert_eq!(kept.body, "my line\n");
+    let tree = s.tree().unwrap();
+    let copy = tree
+        .iter()
+        .find(|i| i.title == "Plan (conflict copy)")
+        .expect("copy");
+    assert_eq!(copy.parent_id, Some(folder));
+    assert_eq!(s.note(&copy.id).unwrap().body, "their line\n");
+
+    // A reply's conflict copy is another reply.
+    s.save_note(&reply, "", "their reply\n").unwrap();
+    s.save_note_from(&reply, "", "reply\n", "", "my reply\n")
+        .unwrap();
+    let bodies: Vec<String> = s
+        .replies(&id)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.body)
+        .collect();
+    assert_eq!(bodies, ["my reply\n", "their reply\n"]);
+}
+
+#[test]
+fn saves_record_only_the_fields_that_changed() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let id = s.create_note(last(None), "Title", "body").unwrap();
+    let before = s.payload(&id).unwrap().unwrap().clocks;
+    s.save_note(&id, "Title", "new body").unwrap();
+    let after = s.payload(&id).unwrap().unwrap().clocks;
+    assert_eq!(after.title, before.title);
+    assert!(after.body > before.body);
+}
+
+#[test]
+fn never_synced_objects_are_queued() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let a = s.create_note(last(None), "A", "").unwrap();
+    s.conn.execute("DELETE FROM outbox", []).unwrap();
+    assert_eq!(s.enqueue_never_synced().unwrap(), 1);
+    assert_eq!(outbox(s), [a]);
+    assert_eq!(s.enqueue_never_synced().unwrap(), 0);
+}
+
+#[test]
+fn superseded_revisions_list_ancestors_first() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let id = s.create_note(last(None), "N", "").unwrap();
+    // Chain r3 -> r2 -> r1 (ids sort the other way round).
+    for (rev, parents) in [("r3", vec![]), ("r2", vec!["r3"]), ("r1", vec!["r2"])] {
+        s.record_remote_revision(&id, rev, &format!("file-{rev}"), 10)
+            .unwrap();
+        let parents: Vec<String> = parents.into_iter().map(str::to_owned).collect();
+        s.set_revision_content(rev, &parents, None).unwrap();
+    }
+    let order: Vec<String> = s
+        .superseded_revisions(i64::MAX)
+        .unwrap()
+        .into_iter()
+        .map(|(rev, _)| rev)
+        .collect();
+    assert_eq!(order, ["r3", "r2"]);
+}

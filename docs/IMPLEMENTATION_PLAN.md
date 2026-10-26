@@ -19,7 +19,8 @@ is usable locally before sync exists.
 | M3 | ✅ done (plus feedback: note dates, Later list, threads) |
 | M4 | ✅ done — attachment cleanup (unreferenced files) moved to M6 |
 | M5 | ✅ done — checked against a real Drive (change feed reports deletions ~0.8 s late) |
-| M6–M8 | not started |
+| M6 | ✅ done in code and in a simulation (thousands of runs) — still to check on two real machines; Windows shutdown-block reason and a sync log moved to M8 |
+| M7–M8 | not started |
 
 ## M0 — Foundations & spikes
 Set up the project and kill the big unknowns before building on them.
@@ -138,7 +139,10 @@ notes back as Markdown, without the app.
   revoked Google access, keychain wiped)
 - Windows installer (NSIS/MSI via Tauri bundler), code signing
 - Auto-update via Tauri updater (signed update manifests)
-- Crash-safe logging (no note content in logs)
+- Crash-safe logging (no note content in logs), including a sync log for
+  debugging (moved from M6)
+- Windows shutdown-block reason while changes are unsynced (moved from M6;
+  until then, changes not pushed at shutdown go up on next launch)
 - Google OAuth app out of "Testing" (which signs you out every 7 days):
   homepage + privacy policy on GitHub Pages, verified domain, publish — see
   [spikes/google-oauth.md](spikes/google-oauth.md) step 4

@@ -101,7 +101,12 @@ export interface Api {
   emptyTrash(): Promise<number>
 
   note(id: Id): Promise<Note>
-  saveNote(id: Id, title: string, body: string): Promise<void>
+  /**
+   * Saves what the editor shows; `base` is what it showed before. If the note
+   * changed meanwhile (sync), both are merged and the merged note returned
+   * for the editor to show; otherwise null.
+   */
+  saveNote(id: Id, title: string, body: string, base: NoteText): Promise<Note | null>
   search(query: string, limit: number): Promise<SearchHit[]>
   /** Puts a note on the Later list or takes it off (which clears the due date). */
   setLater(id: Id, later: boolean, dueDate: string | null): Promise<void>
@@ -111,7 +116,8 @@ export interface Api {
   /** Replies in a note's thread, oldest first. */
   replies(noteId: Id): Promise<Reply[]>
   addReply(noteId: Id, body: string): Promise<Id>
-  saveReply(id: Id, body: string): Promise<void>
+  /** Like saveNote: the reply's merged text, or null. */
+  saveReply(id: Id, body: string, baseBody: string): Promise<string | null>
   /** Deletes a reply for good. */
   deleteReply(id: Id): Promise<void>
 
@@ -132,6 +138,34 @@ export interface Api {
   connectDrive(): Promise<CloudStatus>
   cancelConnect(): Promise<void>
   disconnectDrive(): Promise<CloudStatus>
+
+  /** New device: Google sign-in, then finds the notebook in Drive. Returns the account. */
+  findDriveNotebook(): Promise<string>
+  /** New device: opens the notebook found with its passphrase; notes arrive by sync. */
+  openDriveNotebook(passphrase: string, remember: boolean): Promise<void>
+  /** New device: gives up on the notebook found. */
+  forgetDriveNotebook(): Promise<void>
+
+  syncStatus(): Promise<SyncStatus>
+  /** Starts a sync round soon (no-op when not connected). */
+  syncNow(): Promise<void>
+  onSyncStatus(handler: (status: SyncStatus) => void): Promise<() => void>
+  /** Notes and folders changed by other devices (reload what's shown). */
+  onSyncChanged(handler: (ids: Id[]) => void): Promise<() => void>
+}
+
+export interface NoteText {
+  title: string
+  body: string
+}
+
+export interface SyncStatus {
+  /** off: not connected; offline: the last round failed for a passing reason. */
+  state: 'off' | 'idle' | 'syncing' | 'offline' | 'error'
+  /** Local changes not yet in the cloud. */
+  pending: number
+  last_synced_at: number | null
+  message: string | null
 }
 
 export interface CloudStatus {
