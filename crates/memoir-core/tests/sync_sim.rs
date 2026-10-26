@@ -557,3 +557,59 @@ fn devices_converge_without_losing_text() {
         stats.0, stats.1, stats.2
     );
 }
+
+/// The Memoir folder deleted in Drive (all files gone): the next full
+/// listing uploads everything again, attachments included.
+#[test]
+fn a_lost_cloud_copy_is_rebuilt() {
+    use memoir_core::remote::{Area, StorageProvider};
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let keys = Keyring::derive(&SecretKey::from_bytes([9; 32]), 1);
+        let provider = Arc::new(MemoryProvider::new());
+        let config = SyncConfig {
+            full_list_every_ms: 0,
+            ..SyncConfig::default()
+        };
+        let engine = SyncEngine::new(provider.clone(), keys.clone(), config);
+        let device = Device::new(&keys);
+        device.store(|s| {
+            let folder = s.create_folder(Placement::last_in(None), "F").unwrap();
+            s.create_note(Placement::last_in(Some(folder)), "N", "text\n")
+                .unwrap();
+        });
+        let blob = device.state.lock().unwrap().1.put(b"file").unwrap();
+        device.store(|s| {
+            s.record_blob(&blob, 4, "text/plain").unwrap();
+            s.create_note(
+                Placement::last_in(None),
+                "A",
+                &format!("[f](attachment:{blob})"),
+            )
+            .unwrap();
+        });
+        engine.sync(&device).await.unwrap();
+
+        for area in [Area::Objects, Area::Blobs] {
+            for f in provider.list(area).await.unwrap() {
+                provider.delete(&f.id).await.unwrap();
+            }
+        }
+        let report = engine.sync(&device).await.unwrap();
+        assert_eq!(report.uploaded, 3, "every object again");
+        assert_eq!(
+            provider.list(Area::Blobs).await.unwrap().len(),
+            1,
+            "and the attachment"
+        );
+
+        let fresh = Device::new(&keys);
+        engine.sync(&fresh).await.unwrap();
+        assert!(fresh.snapshot() == device.snapshot());
+        assert!(fresh.state.lock().unwrap().1.contains(&blob));
+    });
+}

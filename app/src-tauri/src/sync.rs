@@ -68,6 +68,8 @@ pub struct Sync {
     round: tokio::sync::Mutex<()>,
     status: Mutex<SyncStatus>,
     last_focus_sync: Mutex<Option<Instant>>,
+    /// The Drive folders were checked this session (see `cloud::check_cloud_folder`).
+    folders_checked: AtomicBool,
     started: AtomicBool,
 }
 
@@ -159,11 +161,33 @@ pub async fn run<R: Runtime>(app: &AppHandle<R>) -> bool {
     };
 
     set_status(app, &state, |s| s.state = SyncState::Syncing);
+    if !state.sync.folders_checked.load(Ordering::SeqCst) {
+        match crate::cloud::check_cloud_folder(&state, &provider).await {
+            Ok(()) => state.sync.folders_checked.store(true, Ordering::SeqCst),
+            // Tried again next round; the sync below reports the problem.
+            Err(e) => log::warn!("checking the Drive folder failed: {e}"),
+        }
+    }
+    let started = Instant::now();
     let engine = SyncEngine::new(provider, keys, SyncConfig::default());
     let result = engine.sync(&AppLocal(&state)).await;
     let ok = result.is_ok();
     match result {
         Ok(report) => {
+            // The sync log: counts and timings only, never content.
+            if report.downloaded + report.uploaded + report.cleaned > 0
+                || !report.changed.is_empty()
+            {
+                log::info!(
+                    "sync: {} down, {} up, {} changed here, {} conflicts, {} cleaned up in {:?}",
+                    report.downloaded,
+                    report.uploaded,
+                    report.changed.len(),
+                    report.conflicts,
+                    report.cleaned,
+                    started.elapsed()
+                );
+            }
             if !report.changed.is_empty() {
                 notify_changed(app, &report);
             }
@@ -174,7 +198,7 @@ pub async fn run<R: Runtime>(app: &AppHandle<R>) -> bool {
             });
         }
         Err(e) => {
-            log::warn!("sync failed: {e}");
+            log::warn!("sync failed after {:?}: {e}", started.elapsed());
             let (state_now, message) = match &e {
                 e if e.is_transient() => (SyncState::Offline, None),
                 SyncError::Provider(ProviderError::Auth) => (

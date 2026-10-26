@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memoir — an encrypted notebook in your own Google Drive</title>
+  <meta name="description" content="Memoir is a personal notebook for Windows. Notes are encrypted on your device and kept in your own Google Drive.">
+  <link rel="icon" href="icon.svg">
+  <style>
+    :root { --text: #1b1f2a; --muted: #5b6272; --accent: #3a6df0; --bg: #ffffff; --soft: #f3f5fb; }
+    @media (prefers-color-scheme: dark) {
+      :root { --text: #e6e8ee; --muted: #9aa1b2; --accent: #7a9cff; --bg: #14161c; --soft: #1d2029; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 56px 20px 72px; }
+    header { display: flex; align-items: center; gap: 16px; }
+    header img { width: 64px; height: 64px; }
+    h1 { margin: 0; font-size: 34px; }
+    .lead { font-size: 20px; color: var(--muted); margin: 18px 0 36px; }
+    h2 { margin: 40px 0 8px; font-size: 21px; }
+    ul { padding-left: 22px; }
+    li { margin: 6px 0; }
+    .card { background: var(--soft); border-radius: 12px; padding: 18px 22px; }
+    a { color: var(--accent); }
+    footer { margin-top: 56px; color: var(--muted); font-size: 15px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="icon.svg" alt="">
+    <h1>Memoir</h1>
+  </header>
+  <p class="lead">A fast, private notebook for Windows. Your notes are encrypted on your
+    computer and kept in your own Google Drive — readable by you, and nobody else.</p>
+
+  <h2>What it does</h2>
+  <ul>
+    <li>Folders and notes, with a simple editor: headings, lists, checklists, tables, images and attached files.</li>
+    <li>Replies under a note, a "Later" list with due dates, full-text search and note history.</li>
+    <li>Works offline. Changes sync between your computers through your Google Drive.</li>
+    <li>Export everything to plain Markdown files at any time.</li>
+  </ul>
+
+  <h2>Private by design</h2>
+  <div class="card">
+    <p>Everything is encrypted on your device with a key protected by your passphrase, before it
+      leaves your computer. Google Drive only ever stores encrypted files. Memoir has no
+      servers and no accounts; there is nothing for us to see.</p>
+    <p>Memoir asks Google for the narrowest access it offers (<em>drive.file</em>): it can see only
+      the files it creates itself, in a <strong>Memoir</strong> folder — nothing else in your Drive.</p>
+  </div>
+
+  <h2>Your notes stay yours</h2>
+  <p>The file format is documented, and a small recovery tool turns a copy of your Memoir folder
+    back into Markdown files with your passphrase or recovery key — even without the app.</p>
+
+  <footer>
+    <a href="privacy.html">Privacy policy</a>
+    · Contact: <a href="mailto:CONTACT_EMAIL">CONTACT_EMAIL</a>
+  </footer>
+</main>
+</body>
+</html>

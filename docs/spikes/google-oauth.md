@@ -35,8 +35,8 @@ To publish ("In production"), Google requires the **Branding** page to have
 an app name, support email, **homepage URL** and **privacy policy URL**, and
 the homepage's domain must be an authorized domain you have verified in
 Google Search Console. Plan for M8:
-1. Host a one-page homepage and a privacy policy (`docs/PRIVACY.md`) on
-   GitHub Pages (`<username>.github.io/memoir`).
+1. Host the homepage and privacy policy in `docs/site/` (replace
+   `CONTACT_EMAIL` first) on GitHub Pages (`<username>.github.io/memoir`).
 2. Verify `<username>.github.io` in Search Console (HTML-file method) and add
    it under **Branding → Authorized domains**.
 3. Fill in the URLs and click **Publish app**. With only the `drive.file`

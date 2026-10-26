@@ -472,7 +472,35 @@ answers with `editor_flushed` (≤ 2 s) before the window hides and sync runs.
 uses an in-memory mock backend (`lib/api/mock.ts`, sample notes;
 `?mock=first_run` / `?mock=locked` show the other screens).
 
-## 11. M0 spike findings (2026-10-24)
+## 11. Hardening (M8)
+
+- **Logs** (`app/src-tauri/src/logging.rs`): `memoir.log` next to the data
+  (`%LOCALAPPDATA%\com.memoir.notebook\logs`), 5 × 1 MB, local times;
+  crashes (panics) are recorded. One line per sync round with counts and
+  timings. Rule: never note content (titles, text, file names), only ids,
+  counts, timings and error kinds. Settings → About opens the folder.
+- **Recovery paths:**
+  - An unreadable revision file is skipped (older versions are used).
+  - A Memoir folder deleted or trashed in Drive is recreated, and its
+    contents uploaded again: once per session the app checks the folders
+    and `vault.json`. After any full listing, objects with no file left in
+    the cloud are queued (`Store::enqueue_lost`).
+  - Revoked access shows "Sync problem → Connect again".
+  - A wiped keychain means unlocking with the passphrase and connecting
+    Drive again.
+  - Images not on this device yet show a placeholder and are retried after
+    each sync.
+- **Windows shutdown** with unsynced changes (`shutdown_block.rs`): on
+  `WM_QUERYENDSESSION` Memoir registers a shutdown-block reason, runs the
+  closing sequence (save, push ≤ 15 s, exit) and lets shutdown continue.
+- **Performance** (10,000 notes, in-memory cloud, `tests/sync_bench.rs`):
+  first sync 19 s, a quiet round 0.27 s, a new device 2 s, one edit pushed
+  and pulled 0.29 s. Sync bookkeeping is written in transactions (one wait
+  for the disk per batch); uploads and downloads run 8 at a time.
+- **Installer:** NSIS, per user. See docs/RELEASE.md for building, code
+  signing and auto-update.
+
+## 12. M0 spike findings (2026-10-24)
 
 1. **TipTap ↔ Markdown round-trip** — works, with one fix.
    (`app/src/lib/editor/markdown.test.ts`)

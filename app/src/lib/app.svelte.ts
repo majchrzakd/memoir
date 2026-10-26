@@ -9,6 +9,9 @@ import { ancestorIds, childrenMap, visibleRows } from './tree'
 type Screen = 'loading' | Status
 type View = 'note' | 'trash' | 'settings'
 
+/** Window event: sync brought changes (e.g. images that were missing). */
+export const SYNCED_EVENT = 'memoir-synced'
+
 const EXPANDED_KEY = 'memoir.expanded'
 const OPEN_NOTE_KEY = 'memoir.openNote'
 const THREAD_LAYOUT_KEY = 'memoir.threadLayout'
@@ -112,6 +115,7 @@ class App {
   private async syncedChanges(ids: Id[]) {
     this.syncedIds = new Set(ids)
     this.syncVersion++
+    window.dispatchEvent(new Event(SYNCED_EVENT))
     this.laterChanged()
     await this.refreshTree().catch((e) => this.fail(e))
   }

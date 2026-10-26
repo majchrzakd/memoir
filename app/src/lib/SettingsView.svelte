@@ -38,6 +38,14 @@
     }
   })
 
+  let version = $state('')
+  $effect(() => {
+    api
+      .appInfo()
+      .then((info) => (version = info.version))
+      .catch(() => {})
+  })
+
   let exporting = $state(false)
   let exported = $state<Exported | null>(null)
   let exportError = $state<string | null>(null)
@@ -181,6 +189,20 @@
       {/if}
     </div>
     {#if exportError}<p class="error">{exportError}</p>{/if}
+  </article>
+
+  <article class="card">
+    <header>
+      <h2>About</h2>
+    </header>
+    <p>Memoir {version}</p>
+    <p class="muted">
+      If something goes wrong, the log helps find out why. It records what Memoir did (like sync
+      rounds and errors), never the content of your notes.
+    </p>
+    <div class="actions">
+      <button onclick={() => api.showLogs().catch((e) => app.fail(e))}>Open log folder</button>
+    </div>
   </article>
 </section>
 

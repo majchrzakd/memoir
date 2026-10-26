@@ -115,6 +115,17 @@
   border-radius: 6px;
 }
 
+/* An image not on this device yet: its alt text in a dashed box. */
+.prose img.missing {
+  display: inline-block;
+  min-width: 180px;
+  min-height: 48px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .prose img.ProseMirror-selectednode {
   outline: 2px solid var(--accent);
 }

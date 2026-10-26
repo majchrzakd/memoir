@@ -1,4 +1,4 @@
-//! Local store: folders and notes in the encrypted SQLite database.
+﻿//! Local store: folders and notes in the encrypted SQLite database.
 //!
 //! The store is the source of truth for the UI. Every change is one
 //! transaction that updates the object, its search index and the sync
@@ -18,7 +18,7 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
-use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ulid::Ulid;
 
@@ -168,7 +168,7 @@ pub struct TreeItem {
     pub parent_id: Option<ObjectId>,
     pub title: String,
     pub sort_key: String,
-    /// Last change to the content (title, body, tags) — not moves, trash or
+    /// Last change to the content (title, body, tags) â€” not moves, trash or
     /// the Later flag.
     pub updated_at: i64,
     pub trashed_at: Option<i64>,
@@ -382,7 +382,7 @@ impl Store {
     /// Keeps the vault file and master key inside the encrypted database, so
     /// an opened store can sync without asking for the passphrase.
     pub fn save_vault(&mut self, file: &VaultFile, vault: &UnlockedVault) -> Result<()> {
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         tx.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('vault_json', ?1)",
             [file.to_json()],
@@ -422,6 +422,31 @@ impl Store {
     }
 
     // ---- Tree ---------------------------------------------------------
+
+    /// Runs `f` as one transaction: a single wait for the disk instead of one
+    /// per change (sync bookkeeping writes thousands of small rows). Store
+    /// methods called inside must not start transactions of their own;
+    /// savepoints are fine.
+    pub fn in_transaction<R, E: From<StoreError>>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> std::result::Result<R, E>,
+    ) -> std::result::Result<R, E> {
+        self.conn
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(|e| E::from(e.into()))?;
+        match f(self) {
+            Ok(r) => {
+                self.conn
+                    .execute_batch("COMMIT")
+                    .map_err(|e| E::from(e.into()))?;
+                Ok(r)
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
 
     /// Turns waiting for the disk on each commit off (`false`) or back on.
     /// Only for tests and bulk work where a crash can simply be redone.
@@ -493,7 +518,7 @@ impl Store {
     ) -> Result<ObjectId> {
         let now = self.now();
         let id = ObjectId::generate();
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         let sort_key = place(&tx, placement, None)?;
         tx.execute(
             "INSERT INTO objects (id, kind, parent_id, title, sort_key, created_at, updated_at)
@@ -520,7 +545,7 @@ impl Store {
             Kind::Note => title.to_owned(),
         };
         let now = self.now();
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         let updated = tx.execute(
             "UPDATE objects SET title = ?2, updated_at = ?3 WHERE id = ?1 AND title != ?2",
             params![id, title, now],
@@ -537,7 +562,7 @@ impl Store {
 
     pub fn move_item(&mut self, id: &ObjectId, placement: Placement) -> Result<()> {
         let now = self.now();
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         reject_reply(&tx, id)?;
         let sort_key = place(&tx, placement, Some(id))?;
         tx.execute(
@@ -552,7 +577,7 @@ impl Store {
     /// Moves an item (and, implicitly, a folder's contents) to the trash.
     pub fn move_to_trash(&mut self, id: &ObjectId) -> Result<()> {
         let now = self.now();
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         reject_reply(&tx, id)?;
         let updated = tx.execute(
             "UPDATE objects SET trashed_at = ?2 WHERE id = ?1 AND trashed_at IS NULL",
@@ -569,7 +594,7 @@ impl Store {
     /// folder is gone or itself in the trash.
     pub fn restore(&mut self, id: &ObjectId) -> Result<()> {
         let now = self.now();
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         let (parent, trashed_at): (Option<ObjectId>, Option<i64>) = tx
             .query_row(
                 "SELECT parent_id, trashed_at FROM objects WHERE id = ?1",
@@ -606,7 +631,7 @@ impl Store {
     /// Permanently deletes a trashed item and everything inside it.
     pub fn purge(&mut self, id: &ObjectId) -> Result<()> {
         let now = self.now();
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         let trashed: Option<i64> = tx
             .query_row("SELECT trashed_at FROM objects WHERE id = ?1", [id], |r| {
                 r.get(0)
@@ -630,7 +655,7 @@ impl Store {
     /// their contents. Returns how many objects were deleted.
     pub fn purge_trashed_before(&mut self, cutoff: i64) -> Result<usize> {
         let now = self.now();
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         let ids: Vec<ObjectId> = tx
             .prepare("SELECT id FROM objects WHERE trashed_at < ?1")?
             .query_map([cutoff], |r| r.get(0))?
@@ -694,7 +719,7 @@ impl Store {
             return Ok(());
         }
         let now = self.now();
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         snapshot_if_due(&tx, &old, now)?;
         tx.execute(
             "UPDATE objects SET title = ?2, updated_at = ?3 WHERE id = ?1",
@@ -788,7 +813,7 @@ impl Store {
             return Ok(());
         }
         let now = self.now();
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         tx.execute(
             "UPDATE objects SET tags = ?2, updated_at = ?3 WHERE id = ?1",
             params![
@@ -818,7 +843,7 @@ impl Store {
         let now = self.now();
         // Keep the original "marked at" time when only the due date changes.
         let later_at = later.then(|| old.later_at.unwrap_or(now));
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         tx.execute(
             "UPDATE objects SET later_at = ?2, due_date = ?3 WHERE id = ?1",
             params![id, later_at, due_date],
@@ -875,7 +900,7 @@ impl Store {
             .find(|v| v.saved_at == saved_at)
             .ok_or(StoreError::NoSuchVersion(*id, saved_at))?;
         let current = self.note(id)?;
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         // Always keep what is being replaced, regardless of the interval.
         tx.execute(
             "INSERT OR IGNORE INTO history (object_id, saved_at, title, body) VALUES (?1, ?2, ?3, ?4)",
@@ -897,7 +922,7 @@ impl Store {
              SELECT coalesce(p.id, o.id),
                     CASE WHEN p.id IS NULL THEN o.parent_id ELSE p.parent_id END,
                     coalesce(p.title, o.title),
-                    snippet(notes_fts, -1, '{MATCH_START}', '{MATCH_END}', '…', 16),
+                    snippet(notes_fts, -1, '{MATCH_START}', '{MATCH_END}', 'â€¦', 16),
                     CASE WHEN p.id IS NULL THEN NULL ELSE o.id END
              FROM notes_fts
              JOIN objects o ON o.seq = notes_fts.rowid
@@ -946,7 +971,7 @@ impl Store {
     pub fn add_reply(&mut self, note_id: &ObjectId, body: &str) -> Result<ObjectId> {
         let now = self.now();
         let id = ObjectId::generate();
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         if object_kind(&tx, note_id)? != Kind::Note {
             return Err(StoreError::NotANote(*note_id));
         }
@@ -973,7 +998,7 @@ impl Store {
     /// Deletes a reply for good (replies don't go to the trash).
     pub fn delete_reply(&mut self, id: &ObjectId) -> Result<()> {
         let now = self.now();
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         if !is_reply(&tx, id)? {
             return Err(StoreError::NotAReply(*id));
         }
@@ -1025,7 +1050,7 @@ impl Store {
     }
 
     pub fn set_remote_values(&mut self, values: &[(&str, &str)]) -> Result<()> {
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         for (key, value) in values {
             tx.execute(
                 "INSERT OR REPLACE INTO remote_state (key, value) VALUES (?1, ?2)",
@@ -1161,9 +1186,9 @@ fn ancestors(conn: &Connection, id: &ObjectId) -> Result<Vec<(ObjectId, Option<i
 }
 
 /// Computes the sort key for an item placed at `placement`, checking that
-/// the target folder exists, is a folder, is not in the trash and — when
-/// `moving` an existing item — is not that item or inside it.
-fn place(tx: &Transaction<'_>, placement: Placement, moving: Option<&ObjectId>) -> Result<String> {
+/// the target folder exists, is a folder, is not in the trash and â€” when
+/// `moving` an existing item â€” is not that item or inside it.
+fn place(tx: &Connection, placement: Placement, moving: Option<&ObjectId>) -> Result<String> {
     if let Some(parent) = &placement.parent {
         if object_kind(tx, parent)? != Kind::Folder {
             return Err(StoreError::NotAFolder(*parent));
@@ -1214,13 +1239,7 @@ fn place(tx: &Transaction<'_>, placement: Placement, moving: Option<&ObjectId>) 
 }
 
 /// Records which fields changed (time + device) and queues the object for sync.
-fn changed(
-    tx: &Transaction<'_>,
-    id: &ObjectId,
-    now: i64,
-    device: &str,
-    fields: &[Field],
-) -> Result<()> {
+fn changed(tx: &Connection, id: &ObjectId, now: i64, device: &str, fields: &[Field]) -> Result<()> {
     for field in fields {
         tx.execute(
             &format!(
@@ -1236,7 +1255,7 @@ fn changed(
 
 /// Queues an object for sync. `queued_at` only ever grows, so sync can tell
 /// whether an object changed again while it was being uploaded.
-fn enqueue(tx: &Transaction<'_>, id: &ObjectId, now: i64) -> Result<()> {
+fn enqueue(tx: &Connection, id: &ObjectId, now: i64) -> Result<()> {
     tx.execute(
         "INSERT INTO outbox (object_id, queued_at) VALUES (?1, ?2)
          ON CONFLICT (object_id) DO UPDATE SET queued_at = max(queued_at + 1, excluded.queued_at)",
@@ -1246,7 +1265,7 @@ fn enqueue(tx: &Transaction<'_>, id: &ObjectId, now: i64) -> Result<()> {
 }
 
 /// Rewrites a note's search entry from its current row.
-fn index_note(tx: &Transaction<'_>, id: &ObjectId) -> Result<()> {
+fn index_note(tx: &Connection, id: &ObjectId) -> Result<()> {
     let (seq, title, body, tags): (i64, String, String, String) = tx.query_row(
         "SELECT o.seq, o.title, b.body, o.tags
          FROM objects o JOIN note_bodies b ON b.seq = o.seq WHERE o.id = ?1",
@@ -1271,7 +1290,7 @@ fn index_note(tx: &Transaction<'_>, id: &ObjectId) -> Result<()> {
 /// the newest kept version is at least that much older (a checkpoint during
 /// long continuous editing). Autosaves in between are not kept. Only the
 /// newest [`HISTORY_MAX_VERSIONS`] are retained.
-fn snapshot_if_due(tx: &Transaction<'_>, old: &Note, now: i64) -> Result<()> {
+fn snapshot_if_due(tx: &Connection, old: &Note, now: i64) -> Result<()> {
     if old.title.is_empty() && old.body.is_empty() {
         return Ok(());
     }
@@ -1298,7 +1317,7 @@ fn snapshot_if_due(tx: &Transaction<'_>, old: &Note, now: i64) -> Result<()> {
 }
 
 /// Deletes `id` and all its descendants; queues each deletion for sync.
-fn purge_subtree(tx: &Transaction<'_>, id: &ObjectId, now: i64) -> Result<usize> {
+fn purge_subtree(tx: &Connection, id: &ObjectId, now: i64) -> Result<usize> {
     let doomed: Vec<(ObjectId, i64)> = tx
         .prepare(
             "WITH RECURSIVE sub(id) AS (

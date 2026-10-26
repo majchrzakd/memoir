@@ -2,8 +2,11 @@ mod attachments;
 mod cloud;
 mod commands;
 mod export;
+mod logging;
 mod session;
 mod shutdown;
+#[cfg(windows)]
+mod shutdown_block;
 mod sync;
 
 use memoir_core::keystore::OsKeychain;
@@ -15,12 +18,9 @@ use crate::session::Session;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    logging::log_panics();
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_log::Builder::default()
-                .level(log::LevelFilter::Info)
-                .build(),
-        )
+        .plugin(logging::plugin())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .register_asynchronous_uri_scheme_protocol(
@@ -33,11 +33,15 @@ pub fn run() {
             },
         )
         .setup(|app| {
-            // Development builds can use a separate data folder (tests, demos)
-            // so they never touch the real notebook.
-            let dir = match std::env::var_os("MEMOIR_DATA_DIR") {
-                Some(dir) if cfg!(debug_assertions) => std::path::PathBuf::from(dir),
-                _ => app.path().app_local_data_dir()?,
+            log::info!(
+                "Memoir {} starting ({} {})",
+                app.package_info().version,
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            );
+            let dir = match logging::data_dir_override() {
+                Some(dir) => dir,
+                None => app.path().app_local_data_dir()?,
             };
             let keychain = OsKeychain::new(app.config().identifier.clone());
             let session = Session::open(dir, Box::new(keychain));
@@ -50,6 +54,10 @@ pub fn run() {
             });
             cloud::restore(&app.state::<AppState>());
             sync::start(app.handle());
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                shutdown_block::install(&window);
+            }
             app.state::<AppState>().sync.now();
             Ok(())
         })
@@ -102,6 +110,8 @@ pub fn run() {
             cloud::forget_drive_notebook,
             export::export_notebook,
             export::show_export,
+            logging::app_info,
+            logging::show_logs,
             sync::sync_status,
             sync::sync_now,
         ])

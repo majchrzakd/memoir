@@ -29,13 +29,28 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "Dominik Majchrzak",
+    "copyright": "© 2026 Dominik Majchrzak",
+    "category": "Productivity",
+    "shortDescription": "Encrypted notebook that syncs through your own Google Drive",
+    "longDescription": "Memoir is a personal notebook. Notes are encrypted on your device and kept in your own Google Drive.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

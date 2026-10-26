@@ -1,4 +1,4 @@
-import { app } from '../app.svelte'
+import { app, SYNCED_EVENT } from '../app.svelte'
 import { attachmentId } from './attachments'
 
 /** The attachment (file link or image) an event happened on, if any. */
@@ -35,14 +35,42 @@ export function attachmentActions(node: HTMLElement) {
     e.stopPropagation()
     app.attachmentMenu = { x: e.clientX, y: e.clientY, ...found }
   }
+  // An image not on this device (yet): a labelled placeholder instead of a
+  // broken image, tried again whenever sync brings something in.
+  const onerror = (e: Event) => {
+    const img = e.target as HTMLElement
+    if (!(img instanceof HTMLImageElement) || !img.dataset.attachment) return
+    img.classList.add('missing')
+    img.title = "This image isn't on this device yet. It appears once it's downloaded."
+  }
+  const onload = (e: Event) => {
+    const img = e.target as HTMLElement
+    if (img instanceof HTMLImageElement && img.classList.contains('missing')) {
+      img.classList.remove('missing')
+      img.removeAttribute('title')
+    }
+  }
+  const retry = () => {
+    for (const img of node.querySelectorAll<HTMLImageElement>('img.missing')) {
+      const url = new URL(img.src)
+      url.searchParams.set('retry', String(Date.now()))
+      img.src = url.toString()
+    }
+  }
   node.addEventListener('click', onclick, true)
   node.addEventListener('dblclick', ondblclick, true)
   node.addEventListener('contextmenu', oncontextmenu, true)
+  node.addEventListener('error', onerror, true)
+  node.addEventListener('load', onload, true)
+  window.addEventListener(SYNCED_EVENT, retry)
   return {
     destroy() {
       node.removeEventListener('click', onclick, true)
       node.removeEventListener('dblclick', ondblclick, true)
       node.removeEventListener('contextmenu', oncontextmenu, true)
+      node.removeEventListener('error', onerror, true)
+      node.removeEventListener('load', onload, true)
+      window.removeEventListener(SYNCED_EVENT, retry)
     },
   }
 }

@@ -66,6 +66,9 @@ export const tauriApi: Api = {
   exportNotebook: (name) => invoke('export_notebook', { name }),
   showExport: (path) => invoke('show_export', { path }),
 
+  appInfo: () => invoke('app_info'),
+  showLogs: () => invoke('show_logs'),
+
   syncStatus: () => invoke('sync_status'),
   syncNow: () => invoke('sync_now'),
   onSyncStatus: (handler) => listen<SyncStatus>('sync-status', (e) => handler(e.payload)),

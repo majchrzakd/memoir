@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Memoir app icon: a note page with a folded corner on the accent colour.
+       Regenerate the PNG/ICO/ICNS files with `npm run tauri icon src-tauri/icons/memoir.svg`. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f7ff7"/>
+      <stop offset="1" stop-color="#2f5ad8"/>
+    </linearGradient>
+  </defs>
+  <rect x="48" y="48" width="928" height="928" rx="208" fill="url(#bg)"/>
+  <!-- Page -->
+  <path d="M312 232h290l150 150v378a40 40 0 0 1-40 40H312a40 40 0 0 1-40-40V272a40 40 0 0 1 40-40z" fill="#ffffff"/>
+  <!-- Folded corner -->
+  <path d="M602 232v110a40 40 0 0 0 40 40h110z" fill="#c9d6fb"/>
+  <!-- Lines of text -->
+  <rect x="352" y="452" width="320" height="40" rx="20" fill="#3a6df0"/>
+  <rect x="352" y="552" width="320" height="40" rx="20" fill="#9db4f5"/>
+  <rect x="352" y="652" width="200" height="40" rx="20" fill="#9db4f5"/>
+</svg>

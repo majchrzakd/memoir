@@ -21,7 +21,7 @@ is usable locally before sync exists.
 | M5 | ✅ done — checked against a real Drive (change feed reports deletions ~0.8 s late) |
 | M6 | ✅ done — simulation (thousands of runs) and two instances on a real Drive, including a conflict; Windows shutdown-block reason and a sync log moved to M8 |
 | M7 | ✅ done — export, `memoir decrypt` (tested end to end with a recovery key), history view |
-| M8 | not started |
+| M8 | in progress — logging, recovery paths, shutdown handling, performance, installer and site drafts done; waiting on code signing, update hosting and Google publishing (see docs/RELEASE.md), then a week of daily use |
 
 ## M0 — Foundations & spikes
 Set up the project and kill the big unknowns before building on them.

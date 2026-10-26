@@ -165,6 +165,11 @@ export interface Api {
   /** Opens the file manager at an export. */
   showExport(path: string): Promise<void>
 
+  /** App version and where its logs are. */
+  appInfo(): Promise<{ version: string; log_dir: string }>
+  /** Opens the log folder. */
+  showLogs(): Promise<void>
+
   syncStatus(): Promise<SyncStatus>
   /** Starts a sync round soon (no-op when not connected). */
   syncNow(): Promise<void>

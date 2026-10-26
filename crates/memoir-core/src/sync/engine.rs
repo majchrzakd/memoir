@@ -9,8 +9,10 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures_util::{StreamExt, TryStreamExt, stream};
 use ulid::Ulid;
 
 use crate::blobs::{BlobError, BlobStore, is_valid_id};
@@ -45,6 +47,11 @@ impl SyncError {
 }
 
 pub type Result<T> = std::result::Result<T, SyncError>;
+
+/// Uploads or downloads at the same time.
+const TRANSFERS: usize = 8;
+/// Downloaded revisions written per transaction.
+const WRITE_BATCH: usize = 200;
 
 #[derive(Debug, Clone)]
 pub struct SyncConfig {
@@ -125,11 +132,18 @@ impl<P: StorageProvider> SyncEngine<P> {
     pub async fn sync(&self, local: &impl Local) -> Result<SyncReport> {
         let mut report = SyncReport::default();
         self.pull(local, &mut report).await?;
-        local.with(|store, _| self.merge_all(store, &mut report))??;
+        self.merge(local, &mut report)?;
         self.fetch_attachments(local).await?;
         self.push(local, &mut report).await?;
         self.clean_up(local, &mut report).await?;
         Ok(report)
+    }
+
+    /// Makes the next round list the cloud fully instead of following the
+    /// change feed (after the cloud folder was recreated, for example).
+    pub fn list_fully_next_time(store: &mut Store) -> Result<()> {
+        store.set_remote_values(&[(key::LISTED_AT, "0")])?;
+        Ok(())
     }
 
     /// Brings this device up to date with the cloud without writing to it:
@@ -138,7 +152,7 @@ impl<P: StorageProvider> SyncEngine<P> {
     pub async fn pull_only(&self, local: &impl Local) -> Result<SyncReport> {
         let mut report = SyncReport::default();
         self.pull(local, &mut report).await?;
-        local.with(|store, _| self.merge_all(store, &mut report))??;
+        self.merge(local, &mut report)?;
         self.fetch_attachments(local).await?;
         Ok(report)
     }
@@ -164,50 +178,89 @@ impl<P: StorageProvider> SyncEngine<P> {
             let cursor = self.provider.cursor().await?;
             let mut files = self.provider.list(Area::Objects).await?;
             files.extend(self.provider.list(Area::Blobs).await?);
-            local.with(|s, _| -> Result<()> {
-                let present: HashSet<String> = files.iter().map(|f| f.id.clone()).collect();
-                for f in &files {
-                    index_file(s, f)?;
-                }
-                s.retain_remote_files(&present)?;
-                s.set_remote_values(&[(key::CURSOR, &cursor), (key::LISTED_AT, &now.to_string())])?;
-                Ok(())
+            local.with(|s, _| {
+                s.in_transaction(|s| -> Result<()> {
+                    let present: HashSet<String> = files.iter().map(|f| f.id.clone()).collect();
+                    for f in &files {
+                        index_file(s, f)?;
+                    }
+                    s.retain_remote_files(&present)?;
+                    let lost = s.enqueue_lost()?;
+                    if lost > 0 {
+                        log::warn!("{lost} items are missing from the cloud; uploading them again");
+                    }
+                    s.set_remote_values(&[
+                        (key::CURSOR, &cursor),
+                        (key::LISTED_AT, &now.to_string()),
+                    ])?;
+                    Ok(())
+                })
             })??;
         } else {
             let changes = self
                 .provider
                 .changes(cursor.as_deref().unwrap_or_default())
                 .await?;
-            local.with(|s, _| -> Result<()> {
-                for f in &changes.files {
-                    index_file(s, f)?;
-                }
-                for removed in &changes.removed {
-                    s.forget_remote_file(removed)?;
-                }
-                s.set_remote_values(&[(key::CURSOR, &changes.cursor)])?;
-                Ok(())
+            local.with(|s, _| {
+                s.in_transaction(|s| -> Result<()> {
+                    for f in &changes.files {
+                        index_file(s, f)?;
+                    }
+                    for removed in &changes.removed {
+                        s.forget_remote_file(removed)?;
+                    }
+                    s.set_remote_values(&[(key::CURSOR, &changes.cursor)])?;
+                    Ok(())
+                })
             })??;
         }
 
+        // A few downloads at a time; results are written in batches (one
+        // wait for the disk per batch, not per revision).
         let todo = local.with(|s, _| s.revisions_to_download())??;
-        for (rev_id, object_id, file_id) in todo {
-            match self.provider.download(&file_id).await {
-                Ok(bytes) => {
-                    let file = self.open_revision(&object_id, &rev_id, &bytes);
-                    if file.is_none() {
-                        log::warn!("revision {object_id}.{rev_id} is unreadable; ignoring it");
+        let mut results = stream::iter(todo)
+            .map(|(rev_id, object_id, file_id)| async move {
+                let outcome = self.provider.download(&file_id).await;
+                (rev_id, object_id, file_id, outcome)
+            })
+            .buffer_unordered(TRANSFERS)
+            .ready_chunks(WRITE_BATCH);
+        while let Some(batch) = results.next().await {
+            let mut opened = Vec::with_capacity(batch.len());
+            let mut gone = Vec::new();
+            let mut failure = None;
+            for (rev_id, object_id, file_id, outcome) in batch {
+                match outcome {
+                    Ok(bytes) => {
+                        let file = self.open_revision(&object_id, &rev_id, &bytes);
+                        if file.is_none() {
+                            log::warn!("revision {object_id}.{rev_id} is unreadable; ignoring it");
+                        }
+                        opened.push((rev_id, file));
                     }
-                    local.with(|s, _| match &file {
-                        Some(f) => s.set_revision_content(&rev_id, &f.parents, Some(&f.object)),
-                        None => s.set_revision_content(&rev_id, &[], None),
-                    })??;
-                    report.downloaded += 1;
+                    Err(ProviderError::NotFound(_)) => gone.push(file_id),
+                    Err(e) => failure = failure.or(Some(e)),
                 }
-                Err(ProviderError::NotFound(_)) => {
-                    local.with(|s, _| s.forget_remote_file(&file_id))??
-                }
-                Err(e) => return Err(e.into()),
+            }
+            local.with(|s, _| {
+                s.in_transaction(|s| -> Result<()> {
+                    for (rev_id, file) in &opened {
+                        match file {
+                            Some(f) => {
+                                s.set_revision_content(rev_id, &f.parents, Some(&f.object))?
+                            }
+                            None => s.set_revision_content(rev_id, &[], None)?,
+                        }
+                    }
+                    for file_id in &gone {
+                        s.forget_remote_file(file_id)?;
+                    }
+                    Ok(())
+                })
+            })??;
+            report.downloaded += opened.len();
+            if let Some(e) = failure {
+                return Err(e.into());
             }
         }
         Ok(())
@@ -225,6 +278,11 @@ impl<P: StorageProvider> SyncEngine<P> {
     }
 
     // ---- Merge --------------------------------------------------------
+
+    /// Merges everything that came in, as one transaction.
+    fn merge(&self, local: &impl Local, report: &mut SyncReport) -> Result<()> {
+        local.with(|store, _| store.in_transaction(|s| self.merge_all(s, report)))?
+    }
 
     fn merge_all(&self, store: &mut Store, report: &mut SyncReport) -> Result<()> {
         for id in store.objects_needing_merge()? {
@@ -381,7 +439,7 @@ impl<P: StorageProvider> SyncEngine<P> {
     async fn fetch_attachments(&self, local: &impl Local) -> Result<()> {
         let missing = local.with(|s, blobs| -> Result<Vec<(String, String)>> {
             let mut out = Vec::new();
-            for id in s.blobs_in_notes()? {
+            for id in s.known_blob_ids()? {
                 if !blobs.contains(&id)
                     && let Some(file) = s.remote_blob(&id)?
                 {
@@ -415,51 +473,72 @@ impl<P: StorageProvider> SyncEngine<P> {
             s.enqueue_never_synced()?;
             Ok(s.outbox()?)
         })??;
-        for entry in queue {
-            let prepared = local.with(|s, blobs| prepare(s, blobs, &entry.id))??;
-            let Some(p) = prepared else { continue };
+        // A few uploads at a time; the first error stops the round (what
+        // was uploaded stays recorded, the rest goes next round).
+        let uploaded = AtomicUsize::new(0);
+        let result = stream::iter(queue)
+            .map(Ok::<_, SyncError>)
+            .try_for_each_concurrent(TRANSFERS, |entry| {
+                let uploaded = &uploaded;
+                async move {
+                    if self.push_one(local, &entry.id).await? {
+                        uploaded.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Ok(())
+                }
+            })
+            .await;
+        report.uploaded += uploaded.into_inner();
+        result
+    }
 
-            // Attachments first, so a revision never refers to a missing one.
-            for (blob_id, bytes) in p.blobs {
-                let file = self
-                    .provider
-                    .upload(Area::Blobs, &format!("{blob_id}.mmr"), bytes)
-                    .await?;
-                local.with(|s, _| s.record_remote_blob(&blob_id, &file.id, file.modified))??;
-            }
+    /// Uploads one queued object (attachments first). False if there was
+    /// nothing to do.
+    async fn push_one(&self, local: &impl Local, id: &ObjectId) -> Result<bool> {
+        let prepared = local.with(|s, blobs| prepare(s, blobs, id))??;
+        let Some(p) = prepared else {
+            return Ok(false);
+        };
 
-            let rev_id = Ulid::generate().to_string();
-            let content = RevisionFile {
-                v: REVISION_FORMAT,
-                parents: p.parents.clone(),
-                object: p.payload.clone(),
-            };
-            let sealed = envelope::seal(
-                &self.keys,
-                &context(&p.payload.id, &rev_id),
-                &serde_json::to_vec(&content).expect("revision serializes"),
-            );
+        // Attachments first, so a revision never refers to a missing one.
+        for (blob_id, bytes) in p.blobs {
             let file = self
                 .provider
-                .upload(
-                    Area::Objects,
-                    &format!("{}.{rev_id}.mmr", p.payload.id),
-                    sealed,
-                )
+                .upload(Area::Blobs, &format!("{blob_id}.mmr"), bytes)
                 .await?;
-            local.with(|s, _| {
-                s.complete_push(
-                    &p.payload,
-                    &rev_id,
-                    &file.id,
-                    file.modified,
-                    &p.parents,
-                    p.version,
-                )
-            })??;
-            report.uploaded += 1;
+            local.with(|s, _| s.record_remote_blob(&blob_id, &file.id, file.modified))??;
         }
-        Ok(())
+
+        let rev_id = Ulid::generate().to_string();
+        let content = RevisionFile {
+            v: REVISION_FORMAT,
+            parents: p.parents.clone(),
+            object: p.payload.clone(),
+        };
+        let sealed = envelope::seal(
+            &self.keys,
+            &context(&p.payload.id, &rev_id),
+            &serde_json::to_vec(&content).expect("revision serializes"),
+        );
+        let file = self
+            .provider
+            .upload(
+                Area::Objects,
+                &format!("{}.{rev_id}.mmr", p.payload.id),
+                sealed,
+            )
+            .await?;
+        local.with(|s, _| {
+            s.complete_push(
+                &p.payload,
+                &rev_id,
+                &file.id,
+                file.modified,
+                &p.parents,
+                p.version,
+            )
+        })??;
+        Ok(true)
     }
 
     // ---- Clean-up -----------------------------------------------------

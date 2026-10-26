@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use memoir_core::remote::{Area, ProviderError, StorageProvider};
+use memoir_core::sync::SyncEngine;
 use memoir_core::vault::VaultFile;
 use memoir_gdrive::{DriveConfig, DriveProvider, Folders, OAuthConfig, OAuthError, oauth};
 use serde::Serialize;
@@ -265,6 +266,45 @@ fn remember(state: &AppState, signed_in: SignedIn) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     state.cloud.set(Some(signed_in.provider));
+    Ok(())
+}
+
+/// Makes sure the Memoir folders and `vault.json` are still in Drive — the
+/// user may have deleted or trashed them — and recreates what's missing.
+/// The next sync round then lists the cloud fully and uploads every note
+/// again (see `Store::enqueue_lost`). Run once per session.
+pub async fn check_cloud_folder(state: &AppState, provider: &DriveProvider) -> Result<(), String> {
+    let folders = provider.ensure_folders().await.map_err(|e| e.to_string())?;
+    let changed = {
+        let mut session = state.session()?;
+        let store = session.store().map_err(|e| e.to_string())?;
+        let stored: Option<Folders> = store
+            .remote_value(key::FOLDERS)
+            .map_err(|e| e.to_string())?
+            .and_then(|json| serde_json::from_str(&json).ok());
+        let changed = stored.as_ref() != Some(&folders);
+        if changed {
+            let json = serde_json::to_string(&folders).expect("folders serialize");
+            store
+                .set_remote_values(&[(key::FOLDERS, &json)])
+                .map_err(|e| e.to_string())?;
+            SyncEngine::<DriveProvider>::list_fully_next_time(store).map_err(|e| e.to_string())?;
+        }
+        changed
+    };
+    if changed {
+        log::warn!("the Memoir folder in Drive was missing; it was created again");
+    }
+    if remote_vault(provider).await?.is_none() {
+        log::warn!("vault.json was missing in Drive; uploading it again");
+        let local = state
+            .session()
+            .and_then(|s| s.vault_file().map_err(|e| e.to_string()))?;
+        provider
+            .upload(Area::Root, VAULT_FILE, local.to_json().into_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

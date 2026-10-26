@@ -68,6 +68,22 @@ impl Store {
         Ok(n)
     }
 
+    /// Queues objects that were synced before but have no file left in the
+    /// cloud at all (the Memoir folder was deleted in Drive, say), so they
+    /// get uploaded again. Call right after a full listing.
+    pub fn enqueue_lost(&mut self) -> Result<usize> {
+        let now = self.now();
+        let n = self.conn.execute(
+            "INSERT OR IGNORE INTO outbox (object_id, queued_at)
+             SELECT o.id, ?1 FROM objects o JOIN sync_objects s ON s.object_id = o.id
+             WHERE s.heads != '[]'
+               AND NOT EXISTS (SELECT 1 FROM revisions r
+                               WHERE r.object_id = o.id AND r.file_id IS NOT NULL)",
+            [now],
+        )?;
+        Ok(n)
+    }
+
     /// Every object on this device (including trashed ones and replies).
     pub fn all_object_ids(&self) -> Result<Vec<ObjectId>> {
         let mut stmt = self.conn.prepare("SELECT id FROM objects ORDER BY id")?;
@@ -342,6 +358,15 @@ impl Store {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Attachments this device knows about (from its own notes and from
+    /// synced ones); those not downloaded yet get fetched.
+    pub fn known_blob_ids(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare_cached("SELECT id FROM blobs")?;
+        Ok(stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Attachment ids referenced by current notes and replies.
     pub fn blobs_in_notes(&self) -> Result<HashSet<String>> {
         let mut stmt = self.conn.prepare("SELECT body FROM note_bodies")?;
@@ -422,7 +447,8 @@ impl Store {
             Err(StoreError::NotFound(_) | StoreError::NotANote(_)) => None,
             Err(e) => return Err(e),
         };
-        let tx = self.conn.transaction()?;
+        // A savepoint, so this also works inside `in_transaction`.
+        let tx = self.conn.savepoint()?;
         if let Some(old) = &old
             && !payload.deleted
             && (old.title != payload.title || old.body != payload.body)
@@ -515,7 +541,8 @@ impl Store {
         parents: &[String],
         version: i64,
     ) -> Result<()> {
-        let tx = self.conn.transaction()?;
+        // A savepoint, so this also works inside `in_transaction`.
+        let tx = self.conn.savepoint()?;
         tx.execute(
             "INSERT OR REPLACE INTO revisions (rev_id, object_id, file_id, modified, parents, payload)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",

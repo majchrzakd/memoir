@@ -485,6 +485,14 @@ export function createMockApi(): Api {
     },
     async showExport() {},
 
+    async appInfo() {
+      return {
+        version: '0.1.0 (mock)',
+        log_dir: 'C:\\Users\\you\\AppData\\Local\\com.memoir.notebook\\logs',
+      }
+    },
+    async showLogs() {},
+
     async syncStatus() {
       return { ...syncStatus() }
     },
