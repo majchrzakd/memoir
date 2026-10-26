@@ -12,8 +12,9 @@
   let recoveryKey = $state<string | null>(null)
   let saved = $state(false)
   let copied = $state(false)
-  /** Make a new notebook, or open one that's in Google Drive already. */
-  let mode = $state<'create' | 'join'>('create')
+  /** First a choice: make a new notebook, or open one that's in Google
+   * Drive already (only offered when this build can sign in to Google). */
+  let mode = $state<'loading' | 'choose' | 'create' | 'join'>('loading')
   let canJoin = $state(false)
 
   $effect(() => {
@@ -21,6 +22,7 @@
       .cloudStatus()
       .then((c) => (canJoin = c.configured))
       .catch(() => {})
+      .finally(() => (mode = canJoin ? 'choose' : 'create'))
   })
 
   const length = $derived([...passphrase].length)
@@ -65,8 +67,31 @@
 </script>
 
 <main class="screen">
-  {#if mode === 'join'}
-    <JoinFromDrive onback={() => (mode = 'create')} />
+  {#if mode === 'loading'}
+    <!-- Decided in a moment; nothing to show meanwhile. -->
+  {:else if mode === 'choose'}
+    <section class="card">
+      <h1>Welcome to Memoir</h1>
+      <p class="muted">Is this your first notebook, or do you already use Memoir elsewhere?</p>
+      <div class="choices">
+        <button class="choice" onclick={() => (mode = 'create')} use:focusOnMount>
+          <Icon name="notePlus" size={22} />
+          <span>
+            <strong>Create a new notebook</strong>
+            <small>Start fresh on this computer. You can connect Google Drive later.</small>
+          </span>
+        </button>
+        <button class="choice" onclick={() => (mode = 'join')}>
+          <Icon name="cloud" size={22} />
+          <span>
+            <strong>Open my notebook from Google Drive</strong>
+            <small>You already use Memoir on another computer.</small>
+          </span>
+        </button>
+      </div>
+    </section>
+  {:else if mode === 'join'}
+    <JoinFromDrive onback={() => (mode = 'choose')} />
   {:else if !recoveryKey}
     <form class="card" onsubmit={create}>
       <h1>Create your notebook</h1>
@@ -93,18 +118,16 @@
       </label>
 
       {#if error}<p class="error">{error}</p>{/if}
-      <button class="primary" type="submit" disabled={busy}>
-        {busy ? 'Creating…' : 'Continue'}
-      </button>
-
-      {#if canJoin}
-        <p class="other">
-          Already use Memoir on another computer?
-          <button type="button" class="link" onclick={() => (mode = 'join')}>
-            Open your notebook from Google Drive
+      <div class="actions">
+        <button class="primary" type="submit" disabled={busy}>
+          {busy ? 'Creating…' : 'Continue'}
+        </button>
+        {#if canJoin}
+          <button type="button" class="link" disabled={busy} onclick={() => (mode = 'choose')}>
+            Back
           </button>
-        </p>
-      {/if}
+        {/if}
+      </div>
     </form>
   {:else}
     <section class="card">
@@ -207,12 +230,50 @@
     align-self: flex-start;
   }
 
-  .other {
-    margin-top: 8px;
-    padding-top: 14px;
-    border-top: 1px solid var(--border);
+  .choices {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 4px;
+  }
+
+  .choice {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--text);
+    text-align: left;
+  }
+
+  .choice:hover {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+  }
+
+  .choice :global(svg) {
+    flex: none;
+    color: var(--accent);
+  }
+
+  .choice span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .choice small {
     color: var(--text-muted);
     font-size: 13px;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
   }
 
   .link {
