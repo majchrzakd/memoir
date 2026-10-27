@@ -10,5 +10,6 @@ Thumbs.db
 
 google_keys.txt
 /.claude/launch.json
-# Local build script with the Google client keys (see docs/RELEASE.md)
+# Local build scripts with the Google client keys (see docs/RELEASE.md)
 /build-installer.bat
+/build-app.sh

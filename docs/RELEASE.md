@@ -32,6 +32,8 @@ Same steps in Terminal (`export MEMOIR_GOOGLE_CLIENT_ID=…` and
 cd app
 npm run tauri build -- --config src-tauri/tauri.local-build.conf.json
 ```
+Or in one go: `build-app.sh` in the project folder (local only, ignored by
+git) holds the keys, builds and installs into `/Applications`.
 This builds for the Mac it runs on: `target/release/bundle/macos/Memoir.app`
 and `target/release/bundle/dmg/Memoir_<version>_aarch64.dmg`. (A universal
 build for Apple silicon and Intel needs
