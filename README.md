@@ -21,6 +21,21 @@ npm run tauri dev      # run the app
 npm run verify         # everything CI runs: types, lint, tests, fmt, clippy
 ```
 
+### iOS (in progress)
+
+Needs a Mac with Xcode (accept its license once: `sudo xcodebuild -license`),
+CocoaPods (`brew install cocoapods`) and the Rust iOS targets
+(`rustup target add aarch64-apple-ios aarch64-apple-ios-sim`). Then:
+
+```sh
+cd app
+npm run tauri ios dev "iPhone 17"   # build and run in that Simulator
+```
+
+The Xcode project is in `app/src-tauri/gen/apple`. Running on a real iPhone
+needs an Apple developer team (`bundle.iOS.developmentTeam` in
+`tauri.conf.json`, or `APPLE_DEVELOPMENT_TEAM`).
+
 To work on the UI alone, `npm run dev` and open <http://localhost:5173> in a
 browser: it runs against an in-memory mock backend with sample notes
 (`?mock=first_run` or `?mock=locked` for the other screens; the locked mock's

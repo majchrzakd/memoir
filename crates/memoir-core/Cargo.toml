@@ -18,7 +18,6 @@ futures-util = { version = "0.3.34", default-features = false, features = ["std"
 getrandom = "0.4.3"
 hkdf = "0.13.0"
 hmac = "0.13.0"
-keyring = "4.2.0"
 log = "0.4.34"
 pulldown-cmark = { version = "0.13.5", default-features = false }
 rusqlite = { version = "0.41.0", features = ["bundled-sqlcipher-vendored-openssl"] }
@@ -30,6 +29,15 @@ ulid = "3.0.0"
 unicode-normalization = "0.1.26"
 zeroize = { version = "1.9.1", features = ["derive"] }
 zstd = "0.14.3"
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+keyring = "4.2.0"
+
+# keyring's ready-made setup stops short of iOS (and its macOS Keychain store
+# doesn't build there): use the iOS Keychain store directly.
+[target.'cfg(target_os = "ios")'.dependencies]
+keyring-core = "1.0.1"
+apple-native-keyring-store = { version = "1.0.2", features = ["protected"] }
 
 [dev-dependencies]
 proptest = "1.12.0"

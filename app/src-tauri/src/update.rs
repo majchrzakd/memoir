@@ -40,9 +40,10 @@ fn info(update: &Update) -> UpdateInfo {
 }
 
 /// Checks in the background now and then (release builds only: development
-/// builds would offer to replace themselves with the installed version).
+/// builds would offer to replace themselves with the installed version; and
+/// not on iOS, where the App Store or TestFlight updates the app).
 pub fn start<R: Runtime>(app: &AppHandle<R>) {
-    if cfg!(debug_assertions) {
+    if cfg!(debug_assertions) || cfg!(mobile) {
         return;
     }
     let app = app.clone();
@@ -64,6 +65,9 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
 }
 
 async fn check<R: Runtime>(app: &AppHandle<R>) -> Result<Option<UpdateInfo>, String> {
+    if cfg!(mobile) {
+        return Ok(None);
+    }
     let update = app
         .updater()
         .map_err(|e| e.to_string())?

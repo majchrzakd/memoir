@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use memoir_core::export::{ExportSummary, export_markdown};
 use serde::Serialize;
 use tauri::{AppHandle, Runtime, State};
+#[cfg(desktop)]
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -26,15 +27,9 @@ pub fn export_notebook<R: Runtime>(
     state: State<'_, AppState>,
     name: String,
 ) -> Result<Option<Exported>, String> {
-    let Some(picked) = app
-        .dialog()
-        .file()
-        .set_title("Choose where to save the export")
-        .blocking_pick_folder()
-    else {
+    let Some(parent) = pick_folder(&app)? else {
         return Ok(None);
     };
-    let parent = picked.into_path().map_err(|e| e.to_string())?;
     let out = new_folder(&parent, &safe_file_name(&name));
     let summary = {
         let mut session = state.session()?;
@@ -45,6 +40,26 @@ pub fn export_notebook<R: Runtime>(
         path: out.display().to_string(),
         summary,
     }))
+}
+
+#[cfg(desktop)]
+fn pick_folder<R: Runtime>(app: &AppHandle<R>) -> Result<Option<PathBuf>, String> {
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .set_title("Choose where to save the export")
+        .blocking_pick_folder()
+    else {
+        return Ok(None);
+    };
+    picked.into_path().map(Some).map_err(|e| e.to_string())
+}
+
+/// iOS has no folder picker; exporting there will go through the Files app
+/// (M10).
+#[cfg(mobile)]
+fn pick_folder<R: Runtime>(_app: &AppHandle<R>) -> Result<Option<PathBuf>, String> {
+    Err("Export isn't available on iPhone yet.".into())
 }
 
 /// Opens the file manager at an export.

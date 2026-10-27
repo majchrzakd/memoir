@@ -31,6 +31,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-ios-sim' || '' }}
 
       - uses: Swatinem/rust-cache@v2
 
@@ -58,3 +59,8 @@ jobs:
 
       - name: Rust tests
         run: cargo test --workspace
+
+      # The iOS app's Rust code (memoir-core and the Tauri shell) still builds.
+      - name: Rust lint for iOS
+        if: runner.os == 'macOS'
+        run: cargo clippy -p memoir-core -p memoir-app --target aarch64-apple-ios-sim -- -D warnings

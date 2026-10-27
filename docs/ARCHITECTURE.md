@@ -582,3 +582,22 @@ Same code; the differences are in the Tauri shell.
 - **Bundle:** `.app` and `.dmg` (`tauri.macos.conf.json`), macOS 11+,
   universal (Apple silicon and Intel) in the Release workflow. Signed ad hoc
   until there is a Developer ID; see docs/RELEASE.md.
+
+## 14. iOS (M10, in progress)
+
+Tauri's iOS build of the same app; the Xcode project is generated into
+`app/src-tauri/gen/apple` (`tauri ios init`) and checked in.
+
+- **Keychain:** `keyring`'s ready-made setup stops short of iOS (and its
+  macOS Keychain store doesn't build there), so on iOS `keystore.rs` uses
+  `keyring-core` with the iOS Keychain store
+  (`apple-native-keyring-store`, "protected data", the app's own access
+  group) directly. Same service and accounts as on the desktop.
+- **Data** in the app's sandbox (`Library/Application Support/com.memoir.notebook`).
+- **Not on iOS:** the updater (the App Store or TestFlight updates the app),
+  the menu bar and window close/quit handling, and Export to Markdown for
+  now (no folder picker; it will go through the Files app).
+- **Still to do:** phone layout, Google sign-in (desktop uses a loopback
+  redirect, which iOS doesn't allow: needs an iOS OAuth client and a custom
+  URL scheme), save and push when the app goes to the background (there is
+  no "closing" on iOS), share sheet for attachments and export.

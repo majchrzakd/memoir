@@ -22,6 +22,7 @@ is usable locally before sync exists.
 | M6 | ✅ done — simulation (thousands of runs) and two instances on a real Drive, including a conflict; Windows shutdown-block reason and a sync log moved to M8 |
 | M7 | ✅ done — export, `memoir decrypt` (tested end to end with a recovery key), history view |
 | M8 | in progress — done: logging, recovery paths, shutdown handling, performance, installer, auto-updates via GitHub Releases, website and Google sign-in published; left: testing and a week of daily use (code signing optional, see docs/RELEASE.md) |
+| M10 | in progress — done: builds and runs in the iOS Simulator (`tauri ios dev`); creating a notebook, the iOS Keychain (key remembered across launches) and notes work; iOS compile check in CI. Left: phone layout (drill-down tree), Google sign-in via an iOS OAuth client and URL scheme, save and push when the app goes to the background, export and attachments through the share sheet / Files, square opaque app icon, running on a real iPhone (Apple developer team), TestFlight |
 | M9 | in progress — done: builds and runs on macOS, Keychain, menu bar, close/quit/Dock conventions, ⌘ shortcut labels, `.app`/`.dmg` with auto-updates (universal build in the Release workflow), macOS in CI; left: Developer ID signing and notarization (needs an Apple Developer account, see docs/RELEASE.md), a week of daily use on a Mac |
 
 ## M0 — Foundations & spikes
