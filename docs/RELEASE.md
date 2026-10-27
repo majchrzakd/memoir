@@ -84,10 +84,12 @@ update themselves from GitHub releases like any installed copy.
 
 ### Google sign-in out of "Testing"
 See [spikes/google-oauth.md](spikes/google-oauth.md) step 4. The homepage
-and privacy policy are drafted in `docs/site/`. Fill in `CONTACT_EMAIL` in
-both pages, publish them (e.g. GitHub Pages), verify the domain in Google
-Search Console, enter the URLs on the Branding page, and publish the app.
-With only the `drive.file` scope, Google doesn't need to review it.
+and privacy policy are in `docs/site/`; the Website workflow publishes them
+to https://majchrzakd.github.io/memoir/ (homepage) and
+https://majchrzakd.github.io/memoir/privacy.html (privacy policy) — one-time:
+repo Settings → Pages → Source: "GitHub Actions". Then verify the domain in
+Google Search Console, enter the URLs on the Branding page, and publish the
+app. With only the `drive.file` scope, Google doesn't need to review it.
 
 ## Before each release
 - `npm.cmd run verify` (types, lint, tests, formatting, clippy)
