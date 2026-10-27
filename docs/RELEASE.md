@@ -16,6 +16,9 @@
    cd app
    npm.cmd run tauri build
    ```
+   Steps 2 and 3 in one go: `build-installer.bat` in the project folder
+   (local only, ignored by git) holds the keys and runs the build.
+
    The installer is `target\release\bundle\nsis\Memoir_<version>_x64-setup.exe`.
    It installs for the current user (no administrator rights needed) and
    fetches the WebView2 runtime if Windows lacks it. Uninstalling leaves the
