@@ -136,6 +136,13 @@ pub fn run() {
             if let RunEvent::Reopen { .. } = _event {
                 show_window(_app);
             }
+            // iOS: Google's sign-in comes back through the app's URL scheme.
+            #[cfg(target_os = "ios")]
+            if let tauri::RunEvent::Opened { urls } = &_event {
+                for url in urls {
+                    _app.state::<AppState>().cloud.opened(url.as_str());
+                }
+            }
         });
 }
 

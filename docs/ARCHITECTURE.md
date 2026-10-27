@@ -608,7 +608,13 @@ Tauri's iOS build of the same app; the Xcode project is generated into
 - **Leaving the app** (`visibilitychange`): the editor is saved and a sync
   starts; coming back pulls. iOS may suspend the app a few seconds later,
   and anything not pushed by then goes up on the next sync.
-- **Still to do:** Google sign-in (desktop uses a loopback redirect, which
-  iOS doesn't allow: needs an iOS OAuth client and a custom URL scheme), a
-  background task so a push can finish after leaving the app, moving notes
+- **Google sign-in:** the desktop's loopback redirect isn't possible on
+  iOS. The iOS app uses its own OAuth client (type iOS, no secret,
+  `IOS_CLIENT_ID` in `cloud.rs`); Google redirects to the reversed client ID
+  as a URL scheme (`Info.ios.plist`), iOS opens Memoir with that URL
+  (`RunEvent::Opened`), and `oauth::sign_in_with_app_redirect` checks the
+  `state` and exchanges the code (PKCE, no client secret). Same project as
+  the desktop client, so both see the same Drive files. The refresh token is
+  per device, in the iOS Keychain.
+- **Still to do:** a background task so a push can finish after leaving the app, moving notes
   without drag & drop, share sheet for attachments and export.

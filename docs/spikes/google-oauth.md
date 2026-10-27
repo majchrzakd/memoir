@@ -26,6 +26,18 @@ account whose Drive will hold your notes.
    treats the secret as non-confidential; PKCE protects the flow. Still, keep
    it out of git.)
 
+## 3b. iOS client (done 2026-10-27)
+iOS doesn't allow the desktop's loopback redirect, so the iPhone app has its
+own client, **in the same project** (Google ties `drive.file` access to the
+project, so all its clients see the same Memoir folder):
+1. **Clients → Create client** → application type **iOS**, name
+   `Memoir iOS`, bundle ID `com.memoir.notebook`. App Store ID and Team ID
+   can stay empty.
+2. It has a client ID but no secret. The ID isn't confidential (it ships in
+   the app): it is `IOS_CLIENT_ID` in `app/src-tauri/src/cloud.rs`, and its
+   reversed form (`com.googleusercontent.apps.<id>`) is the URL scheme in
+   `app/src-tauri/Info.ios.plist`. Change both together.
+
 ## 4. Publish (done 2026-10-27: "In production", site verified)
 **Skip this during development.** "Testing" status works fully for your own
 account (listed under **Test users**); the only drawback is that Google

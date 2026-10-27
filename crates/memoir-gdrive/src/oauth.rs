@@ -1,5 +1,6 @@
-//! Google sign-in for an installed app: Authorization Code + PKCE with a
-//! loopback redirect (RFC 8252), token refresh and revocation.
+//! Google sign-in for an installed app: Authorization Code + PKCE (RFC 8252)
+//! with a loopback redirect (desktop) or a redirect to the app's own URL
+//! scheme (iOS), token refresh and revocation.
 
 use std::future::Future;
 use std::time::{Duration, Instant};
@@ -22,7 +23,7 @@ pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub struct OAuthConfig {
     pub client_id: String,
     /// For desktop clients Google treats this as non-confidential; PKCE
-    /// protects the flow.
+    /// protects the flow. iOS clients have none (empty: not sent).
     pub client_secret: String,
     pub auth_url: String,
     pub token_url: String,
@@ -109,6 +110,57 @@ pub async fn sign_in(
         .map_err(|e| OAuthError::Network(e.to_string()))?
         .port();
     let redirect_uri = format!("http://127.0.0.1:{port}");
+    authorize(
+        config,
+        http,
+        &redirect_uri,
+        open_browser,
+        |state| async move { wait_for_redirect(&listener, &state).await },
+        cancel,
+    )
+    .await
+}
+
+/// The redirect URI for a Google iOS client: its reversed client ID as a URL
+/// scheme (which the app registers), e.g.
+/// `com.googleusercontent.apps.123-abc:/oauth2redirect`.
+pub fn app_redirect_uri(client_id: &str) -> String {
+    let id = client_id.trim_end_matches(".apps.googleusercontent.com");
+    format!("com.googleusercontent.apps.{id}:/oauth2redirect")
+}
+
+/// Like [`sign_in`], but the browser comes back to the app itself: Google
+/// redirects to `redirect_uri` (see [`app_redirect_uri`]), the system opens
+/// the app with that URL, and `redirected` resolves to it.
+pub async fn sign_in_with_app_redirect(
+    config: &OAuthConfig,
+    http: &reqwest::Client,
+    redirect_uri: &str,
+    open_browser: impl FnOnce(&str) -> Result<(), String>,
+    redirected: impl Future<Output = String>,
+    cancel: impl Future<Output = ()>,
+) -> Result<SignIn, OAuthError> {
+    authorize(
+        config,
+        http,
+        redirect_uri,
+        open_browser,
+        |state| async move { code_from_redirect(&redirected.await, &state) },
+        cancel,
+    )
+    .await
+}
+
+/// The consent page, then the code exchange. `wait_for_code` gets the
+/// expected `state` and resolves to the authorization code.
+async fn authorize<F: Future<Output = Result<String, OAuthError>>>(
+    config: &OAuthConfig,
+    http: &reqwest::Client,
+    redirect_uri: &str,
+    open_browser: impl FnOnce(&str) -> Result<(), String>,
+    wait_for_code: impl FnOnce(String) -> F,
+    cancel: impl Future<Output = ()>,
+) -> Result<SignIn, OAuthError> {
     let verifier = Zeroizing::new(random_token(48));
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let state = random_token(24);
@@ -117,7 +169,7 @@ pub async fn sign_in(
         &config.auth_url,
         &[
             ("client_id", config.client_id.as_str()),
-            ("redirect_uri", redirect_uri.as_str()),
+            ("redirect_uri", redirect_uri),
             ("response_type", "code"),
             ("scope", SCOPE),
             ("code_challenge", challenge.as_str()),
@@ -132,21 +184,23 @@ pub async fn sign_in(
     open_browser(url.as_str()).map_err(OAuthError::Network)?;
 
     let code = tokio::select! {
-        code = wait_for_redirect(&listener, &state) => code?,
+        code = wait_for_code(state) => code?,
         () = cancel => return Err(OAuthError::Cancelled),
         () = tokio::time::sleep(SIGN_IN_TIMEOUT) => return Err(OAuthError::TimedOut),
     };
 
     let response = http
         .post(&config.token_url)
-        .form(&[
-            ("code", code.as_str()),
-            ("client_id", config.client_id.as_str()),
-            ("client_secret", config.client_secret.as_str()),
-            ("redirect_uri", redirect_uri.as_str()),
-            ("grant_type", "authorization_code"),
-            ("code_verifier", verifier.as_str()),
-        ])
+        .form(&with_secret(
+            config,
+            vec![
+                ("code", code.as_str()),
+                ("client_id", config.client_id.as_str()),
+                ("redirect_uri", redirect_uri),
+                ("grant_type", "authorization_code"),
+                ("code_verifier", verifier.as_str()),
+            ],
+        ))
         .send()
         .await
         .map_err(|e| OAuthError::Network(e.to_string()))?;
@@ -171,12 +225,14 @@ pub async fn refresh(
 ) -> Result<AccessToken, OAuthError> {
     let response = http
         .post(&config.token_url)
-        .form(&[
-            ("refresh_token", refresh_token),
-            ("client_id", config.client_id.as_str()),
-            ("client_secret", config.client_secret.as_str()),
-            ("grant_type", "refresh_token"),
-        ])
+        .form(&with_secret(
+            config,
+            vec![
+                ("refresh_token", refresh_token),
+                ("client_id", config.client_id.as_str()),
+                ("grant_type", "refresh_token"),
+            ],
+        ))
         .send()
         .await
         .map_err(|e| OAuthError::Network(e.to_string()))?;
@@ -207,6 +263,18 @@ pub async fn revoke(
             response.status()
         )))
     }
+}
+
+/// Token request parameters plus the client secret, if the client has one
+/// (Google rejects an empty one from an iOS client).
+fn with_secret<'a>(
+    config: &'a OAuthConfig,
+    mut form: Vec<(&'a str, &'a str)>,
+) -> Vec<(&'a str, &'a str)> {
+    if !config.client_secret.is_empty() {
+        form.push(("client_secret", config.client_secret.as_str()));
+    }
+    form
 }
 
 async fn token_response(response: reqwest::Response) -> Result<TokenResponse, OAuthError> {
@@ -304,8 +372,70 @@ async fn wait_for_redirect(
     }
 }
 
+/// The authorization code from the URL Google redirected to.
+fn code_from_redirect(redirected: &str, expected_state: &str) -> Result<String, OAuthError> {
+    let url = Url::parse(redirected).map_err(|e| OAuthError::Protocol(e.to_string()))?;
+    let param = |k: &str| {
+        url.query_pairs()
+            .find(|(key, _)| key == k)
+            .map(|(_, v)| v.into_owned())
+    };
+    if let Some(err) = param("error") {
+        return Err(OAuthError::Denied(err));
+    }
+    if param("state").as_deref() != Some(expected_state) {
+        return Err(OAuthError::Protocol("state mismatch".into()));
+    }
+    param("code").ok_or_else(|| OAuthError::Protocol("no code".into()))
+}
+
 fn random_token(bytes: usize) -> String {
     let mut buf = Zeroizing::new(vec![0u8; bytes]);
     getrandom::fill(&mut buf).expect("OS random number generator");
     URL_SAFE_NO_PAD.encode(&*buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_redirect_uri_is_the_reversed_client_id() {
+        assert_eq!(
+            app_redirect_uri("123-abc.apps.googleusercontent.com"),
+            "com.googleusercontent.apps.123-abc:/oauth2redirect"
+        );
+    }
+
+    #[test]
+    fn code_from_redirect_checks_state() {
+        let uri = app_redirect_uri("123-abc.apps.googleusercontent.com");
+        assert_eq!(
+            code_from_redirect(&format!("{uri}?state=s1&code=c1"), "s1"),
+            Ok("c1".into())
+        );
+        assert_eq!(
+            code_from_redirect(&format!("{uri}?state=other&code=c1"), "s1"),
+            Err(OAuthError::Protocol("state mismatch".into()))
+        );
+        assert_eq!(
+            code_from_redirect(&format!("{uri}?error=access_denied&state=s1"), "s1"),
+            Err(OAuthError::Denied("access_denied".into()))
+        );
+    }
+
+    #[test]
+    fn empty_client_secret_is_not_sent() {
+        let ios = OAuthConfig::google("id", "");
+        assert!(
+            !with_secret(&ios, vec![])
+                .iter()
+                .any(|(k, _)| *k == "client_secret")
+        );
+        let desktop = OAuthConfig::google("id", "secret");
+        assert_eq!(
+            with_secret(&desktop, vec![]),
+            vec![("client_secret", "secret")]
+        );
+    }
 }
