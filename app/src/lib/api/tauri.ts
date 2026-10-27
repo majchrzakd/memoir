@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { Api, Id, SyncStatus } from './types'
+import type { Api, Id, SyncStatus, UpdateInfo } from './types'
 
 /** The real backend: Tauri commands (app/src-tauri/src/commands.rs). */
 export const tauriApi: Api = {
@@ -68,6 +68,11 @@ export const tauriApi: Api = {
 
   appInfo: () => invoke('app_info'),
   showLogs: () => invoke('show_logs'),
+
+  checkForUpdate: () => invoke('check_for_update'),
+  availableUpdate: () => invoke('available_update'),
+  installUpdate: () => invoke('install_update'),
+  onUpdateAvailable: (handler) => listen<UpdateInfo>('update-available', (e) => handler(e.payload)),
 
   syncStatus: () => invoke('sync_status'),
   syncNow: () => invoke('sync_now'),

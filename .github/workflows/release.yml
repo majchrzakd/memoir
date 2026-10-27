@@ -1,0 +1,60 @@
+name: Release
+
+# Builds the Windows installer, signs the update and creates a *draft*
+# GitHub release "v<version>" (version from app/src-tauri/tauri.conf.json)
+# with the installer, its signature and latest.json, which installed copies
+# check for updates. Review the draft, then publish it. See docs/RELEASE.md.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Check that the secrets are set
+        shell: bash
+        env:
+          CLIENT_ID: ${{ secrets.MEMOIR_GOOGLE_CLIENT_ID }}
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          [ -n "$CLIENT_ID" ] || { echo "::error::Set the MEMOIR_GOOGLE_CLIENT_ID repository secret"; exit 1; }
+          [ -n "$SIGNING_KEY" ] || { echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY repository secret"; exit 1; }
+          ! grep -q REPLACE_WITH_UPDATE_PUBLIC_KEY app/src-tauri/tauri.conf.json || { echo "::error::Put the update public key (memoir.key.pub) into tauri.conf.json"; exit 1; }
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Built into the app (option_env! in cloud.rs).
+          MEMOIR_GOOGLE_CLIENT_ID: ${{ secrets.MEMOIR_GOOGLE_CLIENT_ID }}
+          MEMOIR_GOOGLE_CLIENT_SECRET: ${{ secrets.MEMOIR_GOOGLE_CLIENT_SECRET }}
+          # Signs the update (the app checks it with the public key).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tagName: v__VERSION__
+          releaseName: Memoir __VERSION__
+          releaseBody: |
+            Download and run **Memoir___VERSION___x64-setup.exe** to install. Memoir updates itself from here on.
+          releaseDraft: true
+          prerelease: false

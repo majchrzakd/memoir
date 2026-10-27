@@ -51,6 +51,18 @@
       "nsis": {
         "installMode": "currentUser"
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE1OUMzQzhFNDdCQjM3QTMKUldTak43dEhqanljcFloMXUzVk9XVTR2VVpFMldQQ2wzcmtJbzBqY1NFY3dwSFQ0RkhWakk2NFgK",
+      "endpoints": [
+        "https://github.com/majchrzakd/memoir/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

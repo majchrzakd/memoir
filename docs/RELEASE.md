@@ -43,20 +43,44 @@ fine for personal use. To avoid it:
 Signing is then configured in `bundle.windows` (`certificateThumbprint` or
 `signCommand`).
 
-### Auto-update
-Tauri's updater checks a small JSON file for a newer, signed installer. It
-needs:
-1. **A place for the files**, e.g. GitHub Releases. The project has no
-   remote repository yet.
-2. **An update signing key** (separate from code signing):
-   `npm.cmd run tauri signer generate -- -w %USERPROFILE%\.tauri\memoir.key`.
-   Keep the private key and its password safe and backed up. If it's lost,
-   installed copies can never update again. The public key goes into
-   `tauri.conf.json`.
-3. Then: add `tauri-plugin-updater`, the endpoint URL, a "Check for updates"
-   step at startup (asking before installing), and set
-   `TAURI_SIGNING_PRIVATE_KEY` when building, so the build also produces the
-   `.sig` file and `latest.json` to upload with the installer.
+## Releases and auto-update (GitHub)
+
+Installed copies check
+`https://github.com/majchrzakd/memoir/releases/latest/download/latest.json`
+about 30 s after starting and every 12 hours. They show "Memoir X is
+available"; **Restart to update** saves, pushes pending changes, installs
+and restarts. Settings → About has "Check for updates". Updates must be
+signed with the project's update key; the public half is
+`plugins.updater.pubkey` in `tauri.conf.json`.
+
+### One-time setup
+1. **Update signing key** (separate from code signing):
+   ```powershell
+   cd app
+   npm.cmd run tauri signer generate -- -w "$env:USERPROFILE\.tauri\memoir.key"
+   ```
+   Keep `memoir.key` and its password safe and backed up (a password
+   manager). If either is lost, installed copies can never update again.
+   `memoir.key.pub` (public) goes into `tauri.conf.json`.
+2. **Repository secrets** (GitHub → the repo → Settings → Secrets and
+   variables → Actions → New repository secret):
+   - `TAURI_SIGNING_PRIVATE_KEY`: the whole content of `memoir.key`
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: its password
+   - `MEMOIR_GOOGLE_CLIENT_ID` and `MEMOIR_GOOGLE_CLIENT_SECRET`: from
+     `google_keys.txt`
+
+### Each release
+1. Set the new version in `app/src-tauri/tauri.conf.json` (`version`) and
+   in `Cargo.toml` (`workspace.package.version`), commit and push.
+2. GitHub → Actions → **Release** → Run workflow. It builds and signs on
+   Windows and creates a **draft** release `v<version>` with the installer,
+   its `.sig` and `latest.json`.
+3. Check the draft (add notes: they're shown in the update notice) and
+   **Publish**. Installed copies pick it up on their next check.
+
+Builds made with `build-installer.bat` skip the update signature
+(`tauri.local-build.conf.json`), so they need no signing key. They still
+update themselves from GitHub releases like any installed copy.
 
 ### Google sign-in out of "Testing"
 See [spikes/google-oauth.md](spikes/google-oauth.md) step 4. The homepage

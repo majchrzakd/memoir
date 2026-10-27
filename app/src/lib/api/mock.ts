@@ -44,6 +44,9 @@ export function createMockApi(): Api {
   // Attachment id → object URL of the file.
   const attachments = new Map<string, string>()
   let lastSynced: number | null = null
+  const mockUpdate = new URLSearchParams(location.search).has('update')
+    ? { version: '0.2.0', notes: 'Faster sync and a new icon.' }
+    : null
   const syncListeners = new Set<(s: SyncStatus) => void>()
   const syncStatus = (): SyncStatus => ({
     state: cloud.connected ? 'idle' : 'off',
@@ -492,6 +495,22 @@ export function createMockApi(): Api {
       }
     },
     async showLogs() {},
+
+    // ?update in the URL pretends a newer version exists.
+    async checkForUpdate() {
+      await new Promise((r) => setTimeout(r, 500))
+      return mockUpdate
+    },
+    async availableUpdate() {
+      return mockUpdate
+    },
+    async installUpdate() {
+      await new Promise((r) => setTimeout(r, 800))
+      location.reload()
+    },
+    async onUpdateAvailable() {
+      return () => {}
+    },
 
     async syncStatus() {
       return { ...syncStatus() }

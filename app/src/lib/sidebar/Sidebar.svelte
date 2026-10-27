@@ -4,6 +4,7 @@
   import Icon from '../ui/Icon.svelte'
   import LaterList from './LaterList.svelte'
   import SyncIndicator from './SyncIndicator.svelte'
+  import UpdateNotice from './UpdateNotice.svelte'
   import Tree from './Tree.svelte'
 
   let later = $state.raw<LaterItem[]>([])
@@ -60,6 +61,7 @@
     <LaterList items={later} />
   {/if}
 
+  <UpdateNotice />
   <footer>
     <button class="trash" class:active={app.view === 'trash'} onclick={() => (app.view = 'trash')}>
       <Icon name="trash" />

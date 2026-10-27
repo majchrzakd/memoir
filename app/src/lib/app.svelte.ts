@@ -2,7 +2,15 @@
 // `app` and call its methods; all persistence goes through `api`.
 
 import { SvelteSet } from 'svelte/reactivity'
-import { api, type Id, type Placement, type Status, type SyncStatus, type TreeItem } from './api'
+import {
+  api,
+  type Id,
+  type Placement,
+  type Status,
+  type SyncStatus,
+  type TreeItem,
+  type UpdateInfo,
+} from './api'
 import type { EditorOptions } from './editor/extensions'
 import { ancestorIds, childrenMap, visibleRows } from './tree'
 
@@ -71,6 +79,11 @@ class App {
   syncVersion = $state(0)
   syncedIds = new Set<Id>()
 
+  /** A newer version, ready to install (null: none known). */
+  update = $state<UpdateInfo | null>(null)
+  /** The user closed the update notice for this session. */
+  updateDismissed = $state(false)
+
   searchOpen = $state(false)
   confirmRequest = $state<ConfirmRequest | null>(null)
   error = $state<string | null>(null)
@@ -109,6 +122,8 @@ class App {
     await api.onSyncStatus((status) => (this.sync = status))
     await api.onSyncChanged((ids) => void this.syncedChanges(ids))
     this.sync = await api.syncStatus()
+    await api.onUpdateAvailable((update) => (this.update = update))
+    this.update = await api.availableUpdate()
   }
 
   /** Other devices changed these notes or folders. */
@@ -118,6 +133,12 @@ class App {
     window.dispatchEvent(new Event(SYNCED_EVENT))
     this.laterChanged()
     await this.refreshTree().catch((e) => this.fail(e))
+  }
+
+  /** Saves everything, installs the update and restarts. */
+  async installUpdate() {
+    await this.flushEditor()
+    await api.installUpdate()
   }
 
   syncNow() {

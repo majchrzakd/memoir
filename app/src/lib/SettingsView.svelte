@@ -46,6 +46,24 @@
       .catch(() => {})
   })
 
+  let checking = $state(false)
+  let checkResult = $state<string | null>(null)
+
+  async function checkForUpdate() {
+    checking = true
+    checkResult = null
+    try {
+      const found = await api.checkForUpdate()
+      app.update = found
+      app.updateDismissed = false
+      checkResult = found ? null : 'You have the latest version.'
+    } catch (e) {
+      checkResult = `Couldn't check for updates: ${errorMessage(e)}`
+    } finally {
+      checking = false
+    }
+  }
+
   let exporting = $state(false)
   let exported = $state<Exported | null>(null)
   let exportError = $state<string | null>(null)
@@ -200,7 +218,21 @@
       If something goes wrong, the log helps find out why. It records what Memoir did (like sync
       rounds and errors), never the content of your notes.
     </p>
+    {#if app.update}
+      <p>Memoir {app.update.version} is available.</p>
+    {:else if checkResult}
+      <p class="muted">{checkResult}</p>
+    {/if}
     <div class="actions">
+      {#if app.update}
+        <button class="primary" onclick={() => app.installUpdate().catch((e) => app.fail(e))}>
+          Restart to update
+        </button>
+      {:else}
+        <button disabled={checking} onclick={checkForUpdate}>
+          {checking ? 'Checking…' : 'Check for updates'}
+        </button>
+      {/if}
       <button onclick={() => api.showLogs().catch((e) => app.fail(e))}>Open log folder</button>
     </div>
   </article>

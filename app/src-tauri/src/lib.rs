@@ -8,6 +8,7 @@ mod shutdown;
 #[cfg(windows)]
 mod shutdown_block;
 mod sync;
+mod update;
 
 use memoir_core::keystore::OsKeychain;
 use tauri::{Manager, WindowEvent};
@@ -23,6 +24,7 @@ pub fn run() {
         .plugin(logging::plugin())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol(
             attachments::SCHEME,
             |ctx, request, responder| {
@@ -52,8 +54,10 @@ pub fn run() {
                 sync: sync::Sync::default(),
                 editor_flushed: Notify::new(),
             });
+            app.manage(update::Updates::default());
             cloud::restore(&app.state::<AppState>());
             sync::start(app.handle());
+            update::start(app.handle());
             #[cfg(windows)]
             if let Some(window) = app.get_webview_window("main") {
                 shutdown_block::install(&window);
@@ -113,6 +117,9 @@ pub fn run() {
             logging::app_info,
             logging::show_logs,
             sync::sync_status,
+            update::check_for_update,
+            update::available_update,
+            update::install_update,
             sync::sync_now,
         ])
         .run(tauri::generate_context!())

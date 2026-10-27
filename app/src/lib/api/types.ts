@@ -170,6 +170,14 @@ export interface Api {
   /** Opens the log folder. */
   showLogs(): Promise<void>
 
+  /** Asks GitHub for a newer version now. */
+  checkForUpdate(): Promise<UpdateInfo | null>
+  /** An update found by an earlier check, if any. */
+  availableUpdate(): Promise<UpdateInfo | null>
+  /** Saves, pushes pending changes, installs and restarts Memoir. */
+  installUpdate(): Promise<void>
+  onUpdateAvailable(handler: (update: UpdateInfo) => void): Promise<() => void>
+
   syncStatus(): Promise<SyncStatus>
   /** Starts a sync round soon (no-op when not connected). */
   syncNow(): Promise<void>
@@ -187,6 +195,11 @@ export interface Exported {
     /** Referenced but not on this device; links left as they were. */
     missing_attachments: number
   }
+}
+
+export interface UpdateInfo {
+  version: string
+  notes: string | null
 }
 
 export interface NoteText {
