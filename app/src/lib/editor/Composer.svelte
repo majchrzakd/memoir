@@ -4,6 +4,7 @@
   import { onMount } from 'svelte'
   import type { Id } from '../api'
   import { app } from '../app.svelte'
+  import { keys } from '../platform'
   import { attachmentActions } from './attachmentActions'
   import { editorExtensions } from './extensions'
 
@@ -67,7 +68,7 @@
     onclick={() => editor?.commands.focus()}
   ></div>
   <div class="actions">
-    <span class="hint">Ctrl+Enter to send</span>
+    <span class="hint">{keys('Ctrl+Enter')} to send</span>
     <button class="primary" disabled={empty || busy} onclick={submit}>Reply</button>
   </div>
 </div>

@@ -26,7 +26,8 @@ pub fn plugin<R: Runtime>() -> TauriPlugin<R> {
             path: dir.join("logs"),
             file_name: Some(FILE_NAME.into()),
         },
-        // %LOCALAPPDATA%\com.memoir.notebook\logs, next to the data.
+        // %LOCALAPPDATA%\com.memoir.notebook\logs (next to the data) on Windows,
+        // ~/Library/Logs/com.memoir.notebook on macOS.
         None => TargetKind::LogDir {
             file_name: Some(FILE_NAME.into()),
         },

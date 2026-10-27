@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type LaterItem } from '../api'
   import { app } from '../app.svelte'
+  import { keys } from '../platform'
   import Icon from '../ui/Icon.svelte'
   import LaterList from './LaterList.svelte'
   import SyncIndicator from './SyncIndicator.svelte'
@@ -23,10 +24,14 @@
 <nav class="sidebar" aria-label="Notebook">
   <header>
     <span class="brand">Memoir</span>
-    <button class="icon" title="New note (Ctrl+N)" onclick={() => app.newNote()}>
+    <button class="icon" title="New note ({keys('Ctrl+N')})" onclick={() => app.newNote()}>
       <Icon name="notePlus" size={18} />
     </button>
-    <button class="icon" title="New folder (Ctrl+Shift+N)" onclick={() => app.newFolder()}>
+    <button
+      class="icon"
+      title="New folder ({keys('Ctrl+Shift+N')})"
+      onclick={() => app.newFolder()}
+    >
       <Icon name="folderPlus" size={18} />
     </button>
   </header>
@@ -34,7 +39,7 @@
   <button class="search" onclick={() => (app.searchOpen = true)}>
     <Icon name="search" />
     <span>Search</span>
-    <kbd>Ctrl+K</kbd>
+    <kbd>{keys('Ctrl+K')}</kbd>
   </button>
 
   <div class="tabs" role="tablist" aria-label="Sidebar">

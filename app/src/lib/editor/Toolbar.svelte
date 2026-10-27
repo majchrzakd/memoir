@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ChainedCommands, Editor } from '@tiptap/core'
   import { app } from '../app.svelte'
+  import { keys } from '../platform'
   import Icon from '../ui/Icon.svelte'
   import { insertAttachments } from './attachments'
 
@@ -28,35 +29,35 @@
     [
       {
         label: 'B',
-        title: 'Bold (Ctrl+B)',
+        title: `Bold (${keys('Ctrl+B')})`,
         run: (c) => c.toggleBold(),
         active: ['bold'],
         style: 'font-weight:700',
       },
       {
         label: 'I',
-        title: 'Italic (Ctrl+I)',
+        title: `Italic (${keys('Ctrl+I')})`,
         run: (c) => c.toggleItalic(),
         active: ['italic'],
         style: 'font-style:italic',
       },
       {
         label: 'U',
-        title: 'Underline (Ctrl+U)',
+        title: `Underline (${keys('Ctrl+U')})`,
         run: (c) => c.toggleUnderline(),
         active: ['underline'],
         style: 'text-decoration:underline',
       },
       {
         label: 'S',
-        title: 'Strikethrough (Ctrl+Shift+S)',
+        title: `Strikethrough (${keys('Ctrl+Shift+S')})`,
         run: (c) => c.toggleStrike(),
         active: ['strike'],
         style: 'text-decoration:line-through',
       },
       {
         label: '</>',
-        title: 'Inline code (Ctrl+E)',
+        title: `Inline code (${keys('Ctrl+E')})`,
         run: (c) => c.toggleCode(),
         active: ['code'],
         style: 'font-family:var(--mono);font-size:12px',
@@ -65,19 +66,19 @@
     [
       {
         label: 'H1',
-        title: 'Heading 1 (Ctrl+Alt+1)',
+        title: `Heading 1 (${keys('Ctrl+Alt+1')})`,
         run: (c) => c.toggleHeading({ level: 1 }),
         active: ['heading', { level: 1 }],
       },
       {
         label: 'H2',
-        title: 'Heading 2 (Ctrl+Alt+2)',
+        title: `Heading 2 (${keys('Ctrl+Alt+2')})`,
         run: (c) => c.toggleHeading({ level: 2 }),
         active: ['heading', { level: 2 }],
       },
       {
         label: 'H3',
-        title: 'Heading 3 (Ctrl+Alt+3)',
+        title: `Heading 3 (${keys('Ctrl+Alt+3')})`,
         run: (c) => c.toggleHeading({ level: 3 }),
         active: ['heading', { level: 3 }],
       },
@@ -85,19 +86,19 @@
     [
       {
         label: '•',
-        title: 'Bulleted list (Ctrl+Shift+8)',
+        title: `Bulleted list (${keys('Ctrl+Shift+8')})`,
         run: (c) => c.toggleBulletList(),
         active: ['bulletList'],
       },
       {
         label: '1.',
-        title: 'Numbered list (Ctrl+Shift+7)',
+        title: `Numbered list (${keys('Ctrl+Shift+7')})`,
         run: (c) => c.toggleOrderedList(),
         active: ['orderedList'],
       },
       {
         label: '☑',
-        title: 'Checklist (Ctrl+Shift+9)',
+        title: `Checklist (${keys('Ctrl+Shift+9')})`,
         run: (c) => c.toggleTaskList(),
         active: ['taskList'],
       },
@@ -105,13 +106,13 @@
     [
       {
         label: '❝',
-        title: 'Quote (Ctrl+Shift+B)',
+        title: `Quote (${keys('Ctrl+Shift+B')})`,
         run: (c) => c.toggleBlockquote(),
         active: ['blockquote'],
       },
       {
         label: '{ }',
-        title: 'Code block (Ctrl+Alt+C)',
+        title: `Code block (${keys('Ctrl+Alt+C')})`,
         run: (c) => c.toggleCodeBlock(),
         active: ['codeBlock'],
         style: 'font-family:var(--mono);font-size:12px',
@@ -124,8 +125,8 @@
       { label: '―', title: 'Divider', run: (c) => c.setHorizontalRule() },
     ],
     [
-      { label: '↶', title: 'Undo (Ctrl+Z)', run: (c) => c.undo() },
-      { label: '↷', title: 'Redo (Ctrl+Y)', run: (c) => c.redo() },
+      { label: '↶', title: `Undo (${keys('Ctrl+Z')})`, run: (c) => c.undo() },
+      { label: '↷', title: `Redo (${keys('Ctrl+Y')})`, run: (c) => c.redo() },
     ],
   ]
 

@@ -9,7 +9,6 @@ use memoir_core::store::{
     TreeItem,
 };
 use tauri::State;
-use tokio::sync::Notify;
 
 use crate::session::{Session, Status};
 
@@ -17,8 +16,8 @@ pub struct AppState {
     pub session: Mutex<Session>,
     pub cloud: crate::cloud::Cloud,
     pub sync: crate::sync::Sync,
-    /// Signalled by the UI when it has saved pending edits (see shutdown.rs).
-    pub editor_flushed: Notify,
+    /// The UI's answers when asked to save pending edits (see shutdown.rs).
+    pub editor_flushed: crate::shutdown::EditorFlush,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -96,8 +95,8 @@ pub fn unlock_with_recovery_key(
 }
 
 #[tauri::command(async)]
-pub fn editor_flushed(state: State<'_, AppState>) {
-    state.editor_flushed.notify_one();
+pub fn editor_flushed(state: State<'_, AppState>, id: u64) {
+    state.editor_flushed.answered(id);
 }
 
 // ---- Tree -------------------------------------------------------------

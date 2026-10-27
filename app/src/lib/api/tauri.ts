@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { Api, Id, SyncStatus, UpdateInfo } from './types'
+import type { Api, Id, MenuCommand, SyncStatus, UpdateInfo } from './types'
 
 /** The real backend: Tauri commands (app/src-tauri/src/commands.rs). */
 export const tauriApi: Api = {
@@ -10,12 +10,13 @@ export const tauriApi: Api = {
   unlock: (passphrase, remember) => invoke('unlock', { passphrase, remember }),
   unlockWithRecoveryKey: (recoveryKey, newPassphrase, remember) =>
     invoke('unlock_with_recovery_key', { recoveryKey, newPassphrase, remember }),
+  // The request's number goes back with the answer (shutdown.rs).
   onFlushRequest: (handler) =>
-    listen('flush-editor', async () => {
+    listen<number>('flush-editor', async (e) => {
       try {
         await handler()
       } finally {
-        await invoke('editor_flushed')
+        await invoke('editor_flushed', { id: e.payload })
       }
     }),
 
@@ -78,4 +79,6 @@ export const tauriApi: Api = {
   syncNow: () => invoke('sync_now'),
   onSyncStatus: (handler) => listen<SyncStatus>('sync-status', (e) => handler(e.payload)),
   onSyncChanged: (handler) => listen<Id[]>('sync-changed', (e) => handler(e.payload)),
+
+  onMenuCommand: (handler) => listen<MenuCommand>('menu-command', (e) => handler(e.payload)),
 }

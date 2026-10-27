@@ -1,9 +1,10 @@
 name: Release
 
-# Builds the Windows installer, signs the update and creates a *draft*
-# GitHub release "v<version>" (version from app/src-tauri/tauri.conf.json)
-# with the installer, its signature and latest.json, which installed copies
-# check for updates. Review the draft, then publish it. See docs/RELEASE.md.
+# Creates a *draft* GitHub release "v<version>" (version from
+# app/src-tauri/tauri.conf.json), then builds the Windows installer and the
+# macOS app (one universal build for Apple silicon and Intel) into it, with
+# their update signatures and latest.json, which installed copies check for
+# updates. Review the draft, then publish it. See docs/RELEASE.md.
 
 on:
   workflow_dispatch:
@@ -12,8 +13,60 @@ permissions:
   contents: write
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  # One draft for both builds (created here, so they don't race to create it).
+  draft:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.draft.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the secrets are set
+        env:
+          CLIENT_ID: ${{ secrets.MEMOIR_GOOGLE_CLIENT_ID }}
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          [ -n "$CLIENT_ID" ] || { echo "::error::Set the MEMOIR_GOOGLE_CLIENT_ID repository secret"; exit 1; }
+          [ -n "$SIGNING_KEY" ] || { echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY repository secret"; exit 1; }
+          ! grep -q REPLACE_WITH_UPDATE_PUBLIC_KEY app/src-tauri/tauri.conf.json || { echo "::error::Put the update public key (memoir.key.pub) into tauri.conf.json"; exit 1; }
+
+      - name: Create the draft release (or reuse one from an earlier run)
+        id: draft
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { version } = require('./app/src-tauri/tauri.conf.json')
+            const tag = `v${version}`
+            const releases = await github.paginate(github.rest.repos.listReleases, context.repo)
+            const existing = releases.find((r) => r.draft && r.tag_name === tag)
+            if (existing) return existing.id
+            const { data } = await github.rest.repos.createRelease({
+              ...context.repo,
+              tag_name: tag,
+              target_commitish: context.sha,
+              name: `Memoir ${version}`,
+              body: [
+                `**Windows:** download and run **Memoir_${version}_x64-setup.exe**.`,
+                `**macOS:** download **Memoir_${version}_universal.dmg** and drag Memoir to Applications.`,
+                '',
+                'Memoir updates itself from here on.',
+              ].join('\n'),
+              draft: true,
+              prerelease: false,
+            })
+            return data.id
+
+  build:
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: ''
+          - os: macos-latest
+            args: --target universal-apple-darwin
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +77,8 @@ jobs:
           cache-dependency-path: app/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: Swatinem/rust-cache@v2
 
@@ -31,15 +86,32 @@ jobs:
         working-directory: app
         run: npm ci
 
-      - name: Check that the secrets are set
+      # Developer ID signing and notarization, once the Apple secrets exist
+      # (docs/RELEASE.md). Without them the app is signed ad hoc.
+      - name: Apple signing
+        if: runner.os == 'macOS'
         shell: bash
         env:
-          CLIENT_ID: ${{ secrets.MEMOIR_GOOGLE_CLIENT_ID }}
-          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          [ -n "$CLIENT_ID" ] || { echo "::error::Set the MEMOIR_GOOGLE_CLIENT_ID repository secret"; exit 1; }
-          [ -n "$SIGNING_KEY" ] || { echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY repository secret"; exit 1; }
-          ! grep -q REPLACE_WITH_UPDATE_PUBLIC_KEY app/src-tauri/tauri.conf.json || { echo "::error::Put the update public key (memoir.key.pub) into tauri.conf.json"; exit 1; }
+          names="APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID"
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::No Apple certificate; the macOS app is signed ad hoc and not notarized"
+            exit 0
+          fi
+          missing=0
+          for name in $names; do
+            [ -n "${!name}" ] || { echo "::error::Set the $name repository secret (needed with APPLE_CERTIFICATE)"; missing=1; }
+          done
+          [ "$missing" = 0 ] || exit 1
+          for name in $names; do
+            echo "$name=${!name}" >> "$GITHUB_ENV"
+          done
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -52,9 +124,5 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
-          tagName: v__VERSION__
-          releaseName: Memoir __VERSION__
-          releaseBody: |
-            Download and run **Memoir___VERSION___x64-setup.exe** to install. Memoir updates itself from here on.
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.draft.outputs.release_id }}
+          args: ${{ matrix.args }}

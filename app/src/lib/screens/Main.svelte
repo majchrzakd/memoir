@@ -1,6 +1,9 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+  import { api, type MenuCommand } from '../api'
   import { app } from '../app.svelte'
   import Editor from '../editor/Editor.svelte'
+  import { keys } from '../platform'
   import SearchPalette from '../SearchPalette.svelte'
   import Sidebar from '../sidebar/Sidebar.svelte'
   import SettingsView from '../SettingsView.svelte'
@@ -39,19 +42,47 @@
     }
   }
 
+  function run(command: MenuCommand) {
+    switch (command) {
+      case 'search':
+        app.searchOpen = true
+        break
+      case 'new-folder':
+        void app.newFolder()
+        break
+      case 'new-note':
+        void app.newNote()
+        break
+      case 'settings':
+        app.view = 'settings'
+        break
+      default: {
+        // Every command is handled (compile error otherwise).
+        const unhandled: never = command
+        console.warn('unknown menu command', unhandled)
+      }
+    }
+  }
+
   function onkeydown(e: KeyboardEvent) {
     const ctrl = e.ctrlKey || e.metaKey
     if (ctrl && (e.key === 'k' || e.key === 'p')) {
-      app.searchOpen = true
+      run('search')
     } else if (ctrl && e.shiftKey && e.key.toLowerCase() === 'n') {
-      void app.newFolder()
+      run('new-folder')
     } else if (ctrl && e.key === 'n') {
-      void app.newNote()
+      run('new-note')
     } else {
       return
     }
     e.preventDefault()
   }
+
+  // macOS menu bar; its shortcuts never reach onkeydown.
+  onMount(() => {
+    const stop = api.onMenuCommand(run)
+    return () => void stop.then((unlisten) => unlisten())
+  })
 </script>
 
 <svelte:window {onkeydown} />
@@ -76,7 +107,7 @@
       <Editor noteId={app.openNoteId} />
     {:else}
       <div class="empty muted">
-        <p>Select a note, or press <kbd>Ctrl+N</kbd> to create one.</p>
+        <p>Select a note, or press <kbd>{keys('Ctrl+N')}</kbd> to create one.</p>
       </div>
     {/if}
   </main>

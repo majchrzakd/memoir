@@ -1,4 +1,4 @@
-# Releasing Memoir for Windows
+# Releasing Memoir (Windows and macOS)
 
 ## Build the installer
 
@@ -24,6 +24,24 @@
    fetches the WebView2 runtime if Windows lacks it. Uninstalling leaves the
    notebook in `%LOCALAPPDATA%\com.memoir.notebook`.
 
+### On a Mac
+
+Same steps in Terminal (`export MEMOIR_GOOGLE_CLIENT_ID=…` and
+`export MEMOIR_GOOGLE_CLIENT_SECRET=…`), then:
+```sh
+cd app
+npm run tauri build -- --config src-tauri/tauri.local-build.conf.json
+```
+Or in one go: `build-app.sh` in the project folder (local only, ignored by
+git) holds the keys, builds and installs into `/Applications`.
+This builds for the Mac it runs on: `target/release/bundle/macos/Memoir.app`
+and `target/release/bundle/dmg/Memoir_<version>_aarch64.dmg`. (A universal
+build for Apple silicon and Intel needs
+`rustup target add aarch64-apple-darwin x86_64-apple-darwin` and
+`--target universal-apple-darwin`; the Release workflow does that.)
+Uninstalling (dragging Memoir to the Bin) leaves the notebook in
+`~/Library/Application Support/com.memoir.notebook`.
+
 The icon is drawn in `app/src-tauri/icons/memoir.svg`; after changing it,
 regenerate the sizes with `npm.cmd run tauri icon src-tauri/icons/memoir.svg`
 (and delete the `android`/`ios` folders it also creates, until those
@@ -42,6 +60,26 @@ fine for personal use. To avoid it:
 
 Signing is then configured in `bundle.windows` (`certificateThumbprint` or
 `signCommand`).
+
+### macOS signing and notarization
+Until then the Mac app is signed *ad hoc*. It runs, but:
+- the first time, macOS refuses to open an app downloaded from the internet
+  that isn't notarized. Open it once with right-click → **Open** (or System
+  Settings → Privacy & Security → **Open Anyway**); updates after that are
+  fine;
+- after an update the Keychain may ask again whether Memoir can use its saved
+  key (choose **Always Allow**), because an ad-hoc signature changes with
+  every build.
+
+To remove both: an **Apple Developer Program** membership ($99/year) gives a
+*Developer ID Application* certificate. Then add these repository secrets and
+the Release workflow signs and notarizes the Mac app:
+- `APPLE_CERTIFICATE`: the certificate exported from Keychain Access as
+  `.p12`, base64-encoded (`base64 -i cert.p12 | pbcopy`)
+- `APPLE_CERTIFICATE_PASSWORD`: the `.p12` export password
+- `APPLE_SIGNING_IDENTITY`: e.g. `Developer ID Application: Dominik Majchrzak (TEAMID)`
+- `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password from
+  account.apple.com) and `APPLE_TEAM_ID`, for notarization
 
 ## Releases and auto-update (GitHub)
 
@@ -73,8 +111,9 @@ signed with the project's update key; the public half is
 1. Set the new version in `app/src-tauri/tauri.conf.json` (`version`) and
    in `Cargo.toml` (`workspace.package.version`), commit and push.
 2. GitHub → Actions → **Release** → Run workflow. It builds and signs on
-   Windows and creates a **draft** release `v<version>` with the installer,
-   its `.sig` and `latest.json`.
+   Windows and macOS and creates a **draft** release `v<version>` with the
+   Windows installer, the Mac `.dmg` and `.app.tar.gz` (what updates
+   download), their `.sig` files and `latest.json`.
 3. Check the draft (add notes: they're shown in the update notice) and
    **Publish**. Installed copies pick it up on their next check.
 
