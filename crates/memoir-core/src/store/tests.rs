@@ -842,3 +842,28 @@ fn text_replaced_by_sync_is_kept_in_history() {
     assert_eq!(f.store.note(&id).unwrap().body, "theirs");
     assert_eq!(bodies(&f.store, &id), ["mine"]);
 }
+
+#[test]
+fn history_merges_versions_saved_moments_apart() {
+    let mut f = fixture();
+    const SEC: i64 = 1_000;
+    const MIN: i64 = 60 * SEC;
+    let at = |f: &Fixture, t: i64| f.clock.store(t, Ordering::SeqCst);
+
+    at(&f, 0);
+    let note = f.store.create_note(last(None), "T", "v0").unwrap();
+    // Eleven minutes of typing: a checkpoint keeps v10 (saved at 10 min)…
+    for i in 1..=11 {
+        at(&f, i * MIN);
+        f.store.save_note(&note, "T", &format!("v{i}")).unwrap();
+    }
+    at(&f, 11 * MIN + 30 * SEC);
+    f.store.save_note(&note, "T", "v12").unwrap();
+    assert_eq!(bodies(&f.store, &note), ["v10", "v0"]);
+
+    // …then a pause. Editing again keeps v12, which replaces the checkpoint
+    // taken 1.5 minutes before it.
+    at(&f, 30 * MIN);
+    f.store.save_note(&note, "T", "v13").unwrap();
+    assert_eq!(bodies(&f.store, &note), ["v12", "v0"]);
+}

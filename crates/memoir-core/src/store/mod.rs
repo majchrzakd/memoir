@@ -29,6 +29,8 @@ use crate::vault::{UnlockedVault, VaultFile};
 /// Keep at most one history version per this much editing time.
 const HISTORY_INTERVAL_MS: i64 = 10 * 60 * 1000;
 const HISTORY_MAX_VERSIONS: i64 = 50;
+/// Versions saved this close together are kept as one (the later).
+const HISTORY_MERGE_MS: i64 = 2 * 60 * 1000;
 
 /// Marks the start / end of a matched term in [`SearchHit::snippet`].
 pub const MATCH_START: char = '\u{1}';
@@ -1289,7 +1291,8 @@ fn index_note(tx: &Connection, id: &ObjectId) -> Result<()> {
 /// it sat unchanged for [`HISTORY_INTERVAL_MS`] (an edit after a pause), or
 /// the newest kept version is at least that much older (a checkpoint during
 /// long continuous editing). Autosaves in between are not kept. Only the
-/// newest [`HISTORY_MAX_VERSIONS`] are retained.
+/// newest [`HISTORY_MAX_VERSIONS`] are retained, and of two versions saved
+/// within [`HISTORY_MERGE_MS`] only the later.
 fn snapshot_if_due(tx: &Connection, old: &Note, now: i64) -> Result<()> {
     if old.title.is_empty() && old.body.is_empty() {
         return Ok(());
@@ -1307,6 +1310,12 @@ fn snapshot_if_due(tx: &Connection, old: &Note, now: i64) -> Result<()> {
     tx.execute(
         "INSERT OR IGNORE INTO history (object_id, saved_at, title, body) VALUES (?1, ?2, ?3, ?4)",
         params![old.id, old.updated_at, old.title, old.body],
+    )?;
+    // A version saved just before this one (a checkpoint taken moments
+    // before a pause) adds nothing worth a separate entry.
+    tx.execute(
+        "DELETE FROM history WHERE object_id = ?1 AND saved_at < ?2 AND saved_at >= ?2 - ?3",
+        params![old.id, old.updated_at, HISTORY_MERGE_MS],
     )?;
     tx.execute(
         "DELETE FROM history WHERE object_id = ?1 AND saved_at NOT IN (

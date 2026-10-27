@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Editor } from '@tiptap/core'
   import { onMount } from 'svelte'
-  import { api, type HistoryEntry, type Id } from '../api'
+  import { api, type HistoryEntry, type Id, type NoteText } from '../api'
   import { app } from '../app.svelte'
   import { fullTime, sinceTime } from '../time'
   import { editorExtensions } from './extensions'
@@ -9,12 +9,26 @@
 
   let {
     noteId,
+    current,
     onclose,
     onrestore,
-  }: { noteId: Id; onclose: () => void; onrestore: (savedAt: number) => Promise<void> } = $props()
+  }: {
+    noteId: Id
+    /** The note as the editor shows it now, listed first. */
+    current: NoteText
+    onclose: () => void
+    onrestore: (savedAt: number) => Promise<void>
+  } = $props()
 
+  /** An entry in the list: an earlier version, or the current text (no saved_at). */
+  type Item = HistoryEntry | (NoteText & { saved_at: null })
+
+  // svelte-ignore state_referenced_locally
+  const currentItem: Item = { ...current, saved_at: null }
   let versions = $state.raw<HistoryEntry[] | null>(null)
-  let selected = $state<HistoryEntry | null>(null)
+  const items = $derived<Item[]>([currentItem, ...(versions ?? [])])
+  // Raw: compared by identity with the list entries.
+  let selected = $state.raw<Item | null>(null)
   let busy = $state(false)
   let host = $state<HTMLDivElement>()
   let closeButton = $state<HTMLButtonElement>()
@@ -27,7 +41,8 @@
       .noteHistory(noteId)
       .then((list) => {
         versions = list
-        if (list.length) show(list[0])
+        // The newest earlier version: what restoring would most likely bring back.
+        show(list[0] ?? currentItem)
       })
       .catch((e) => {
         app.fail(e)
@@ -36,7 +51,7 @@
     return () => preview?.destroy()
   })
 
-  function show(version: HistoryEntry) {
+  function show(version: Item) {
     selected = version
     if (!host) return
     if (!preview) {
@@ -55,7 +70,7 @@
   }
 
   async function restore() {
-    if (!selected) return
+    if (selected?.saved_at == null) return
     busy = true
     try {
       await onrestore(selected.saved_at)
@@ -69,10 +84,10 @@
 
   function onkeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') onclose()
-    if (!versions?.length || !selected || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return
+    if (!selected || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return
     e.preventDefault()
-    const i = versions.indexOf(selected) + (e.key === 'ArrowDown' ? 1 : -1)
-    if (i >= 0 && i < versions.length) show(versions[i])
+    const i = items.indexOf(selected) + (e.key === 'ArrowDown' ? 1 : -1)
+    if (i >= 0 && i < items.length) show(items[i])
   }
 </script>
 
@@ -81,18 +96,33 @@
     class="dialog history"
     role="dialog"
     aria-modal="true"
-    aria-label="Earlier versions"
+    aria-label="History"
     tabindex="-1"
     onclick={(e) => e.stopPropagation()}
     {onkeydown}
   >
     <header>
-      <h2>Earlier versions</h2>
+      <h2>History</h2>
     </header>
     <div class="body">
       <ul class="list" aria-label="Versions">
+        <li>
+          <button
+            class="current"
+            class:selected={selected === currentItem}
+            aria-current={selected === currentItem}
+            onclick={() => show(currentItem)}
+          >
+            <span>Current version</span>
+            <small>What the note says now</small>
+          </button>
+        </li>
         {#if versions && !versions.length}
-          <li class="empty">None yet.</li>
+          <li class="empty">
+            No earlier versions yet. Memoir keeps one when you come back to a note after a 10-minute
+            pause, and every 10 minutes while you keep editing (the last 50). Changes from other
+            devices are kept the same way.
+          </li>
         {/if}
         {#each versions ?? [] as version (version.saved_at)}
           {@const since = sinceTime(version.saved_at, now)}
@@ -113,12 +143,6 @@
       <div class="preview">
         {#if selected}
           <h3>{selected.title || 'Untitled'}</h3>
-        {:else if versions && !versions.length}
-          <p class="muted">
-            Memoir keeps a version when you come back to a note after a 10-minute pause, and every
-            10 minutes while you keep editing (the last 50). Changes from other devices are kept the
-            same way.
-          </p>
         {/if}
         <div bind:this={host}></div>
       </div>
@@ -127,7 +151,12 @@
       <span class="muted">Kept on this device only.</span>
       <span class="spacer"></span>
       <button bind:this={closeButton} onclick={onclose}>Close</button>
-      <button class="primary" disabled={!selected || busy} onclick={restore}>
+      <button
+        class="primary"
+        disabled={selected?.saved_at == null || busy}
+        title={selected?.saved_at == null ? 'This is the current version' : undefined}
+        onclick={restore}
+      >
         {busy ? 'Restoring…' : 'Restore this version'}
       </button>
     </footer>
@@ -209,6 +238,13 @@
   .empty {
     padding: 6px 10px;
     color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .current {
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border) !important;
+    border-radius: 6px 6px 0 0;
   }
 
   .preview {

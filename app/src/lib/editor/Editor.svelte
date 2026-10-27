@@ -305,7 +305,12 @@
   </div>
   <footer class:error={status === 'error'}>{statusText}</footer>
   {#if historyOpen}
-    <HistoryDialog {noteId} onclose={() => (historyOpen = false)} onrestore={restoreVersion} />
+    <HistoryDialog
+      {noteId}
+      current={{ title, body: editor?.getMarkdown() ?? '' }}
+      onclose={() => (historyOpen = false)}
+      onrestore={restoreVersion}
+    />
   {/if}
 </section>
 
