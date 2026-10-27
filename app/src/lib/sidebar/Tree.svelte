@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Id, Placement } from '../api'
   import { app } from '../app.svelte'
+  import { keys } from '../platform'
   import { fullTime, shortTime } from '../time'
   import { displayTitle, dropTarget, type DropZone, type Row } from '../tree'
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte'
@@ -102,6 +103,10 @@
       case 'Delete':
         if (row) void app.trash(row.item.id)
         break
+      case 'Backspace': // ⌘⌫ on a Mac, as in Finder
+        if (!e.metaKey) return
+        if (row) void app.trash(row.item.id)
+        break
       case 'ContextMenu':
         if (row) openMenu(row, 24 + row.depth * 16, (selectedIndex + 1) * ROW_HEIGHT - scrollTop)
         break
@@ -118,8 +123,8 @@
     let items: MenuItem[]
     if (!item) {
       items = [
-        { label: 'New note', shortcut: 'Ctrl+N', action: () => app.newNote(null) },
-        { label: 'New folder', shortcut: 'Ctrl+Shift+N', action: () => app.newFolder(null) },
+        { label: 'New note', shortcut: keys('Ctrl+N'), action: () => app.newNote(null) },
+        { label: 'New folder', shortcut: keys('Ctrl+Shift+N'), action: () => app.newFolder(null) },
       ]
     } else {
       app.selectedId = item.id
@@ -295,7 +300,7 @@
     </div>
   </div>
   {#if app.rows.length === 0}
-    <p class="no-notes muted">No notes yet. Press Ctrl+N to create one.</p>
+    <p class="no-notes muted">No notes yet. Press {keys('Ctrl+N')} to create one.</p>
   {/if}
 </div>
 

@@ -550,3 +550,29 @@ uses an in-memory mock backend (`lib/api/mock.ts`, sample notes;
    - The 15 s timeout path is in place.
    - Windows logoff/shutdown (`WM_QUERYENDSESSION` + shutdown-block reason)
      is not covered yet; it moves to M6 as planned.
+
+## 13. macOS (M9)
+
+Same code; the differences are in the Tauri shell.
+
+- **Data** in `~/Library/Application Support/com.memoir.notebook`, logs in
+  `~/Library/Logs/com.memoir.notebook`, keys in the login Keychain (service
+  `com.memoir.notebook`, same accounts as on Windows).
+- **Closing and quitting** (`shutdown.rs`, `menu.rs`): as Mac apps do,
+  closing the window (red button, ⌘W) only hides it — the editor is saved
+  and changes are pushed in the background — and clicking the Dock icon
+  shows it again. Quit (⌘Q, or Memoir → Quit Memoir) runs the full closing
+  sequence. Quit is Memoir's own menu item because the standard one ends the
+  process at once (tao has no `applicationShouldTerminate`); quitting from
+  the Dock, logging out or shutting down still do, so changes not pushed yet
+  go up on next launch (they are safe in the local outbox).
+- **Menu bar** (`menu.rs`): Memoir (About, Settings… ⌘,, Services, Hide,
+  Quit), File (New Note ⌘N, New Folder ⇧⌘N, Search… ⌘K, Close Window),
+  the standard Edit menu (which is what makes ⌘C/⌘V/⌘Z work in the
+  webview) and Window. Items for the UI arrive as the `menu-command` event.
+- **Shortcut labels** in the UI come from `app/src/lib/platform.ts`
+  (`keys('Ctrl+Shift+N')` → `⇧⌘N`); the shortcuts themselves already used
+  `Mod`/`metaKey`. ⌘⌫ moves the selected tree item to the trash.
+- **Bundle:** `.app` and `.dmg` (`tauri.macos.conf.json`), macOS 11+,
+  universal (Apple silicon and Intel) in the Release workflow. Signed ad hoc
+  until there is a Developer ID; see docs/RELEASE.md.

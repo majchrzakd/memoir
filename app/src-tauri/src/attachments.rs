@@ -20,7 +20,8 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::commands::AppState;
 
-/// URI scheme the UI loads images from (`http://attachment.localhost/<id>` on Windows).
+/// URI scheme the UI loads images from (`http://attachment.localhost/<id>` on Windows,
+/// `attachment://localhost/<id>` on macOS).
 pub const SCHEME: &str = "attachment";
 const MIME_HEADER: &str = "x-mime";
 
@@ -61,7 +62,7 @@ pub fn add_attachment(
     })
 }
 
-/// Opens an attachment in the program Windows associates with its type.
+/// Opens an attachment in the program the system associates with its type.
 #[tauri::command(async)]
 pub fn open_attachment<R: Runtime>(
     app: AppHandle<R>,

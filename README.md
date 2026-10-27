@@ -6,13 +6,15 @@ your own Google Drive.
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Roadmap: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
 
-## Development (Windows)
+## Development
 
-Prerequisites: Rust (stable, via rustup), Node.js LTS, Visual Studio C++ build
-tools, and [Strawberry Perl](https://strawberryperl.com/) (builds the vendored
-OpenSSL used by SQLCipher).
+Prerequisites: Rust (stable, via rustup) and Node.js LTS, plus
+- **Windows:** Visual Studio C++ build tools and
+  [Strawberry Perl](https://strawberryperl.com/) (builds the vendored OpenSSL
+  used by SQLCipher);
+- **macOS:** the Xcode Command Line Tools (`xcode-select --install`).
 
-```powershell
+```sh
 cd app
 npm install
 npm run tauri dev      # run the app
@@ -24,15 +26,21 @@ browser: it runs against an in-memory mock backend with sample notes
 (`?mock=first_run` or `?mock=locked` for the other screens; the locked mock's
 passphrase is `correct horse`).
 
-The app keeps its data in `%LOCALAPPDATA%\com.memoir.notebook` (`vault.json`,
-`memoir.db`, `blobs\` with encrypted attachments); the database key is remembered in Windows Credential Manager
-under `com.memoir.notebook`. Development builds can use another folder by setting
+The app keeps its data in `%LOCALAPPDATA%\com.memoir.notebook` on Windows and
+`~/Library/Application Support/com.memoir.notebook` on macOS (`vault.json`,
+`memoir.db`, `blobs` with encrypted attachments); the database key is
+remembered in Windows Credential Manager or the macOS Keychain under
+`com.memoir.notebook`. Development builds can use another folder by setting
 `MEMOIR_DATA_DIR` (handy for testing without touching your notebook).
+
+On macOS, a development build is a different program each time it's rebuilt,
+so the Keychain may ask whether `memoir-app` can use its saved key: choose
+**Always Allow**.
 
 To try sync with a "second device" on one machine, run another development
 instance with its own data folder, choose **Open your notebook from Google
 Drive** on its first screen, and edit in both windows. The two instances share
-the Credential Manager entries (same notebook), which is harmless.
+the Credential Manager / Keychain entries (same notebook), which is harmless.
 
 ### Getting your notes out without the app
 

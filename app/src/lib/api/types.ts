@@ -184,6 +184,9 @@ export interface Api {
   onSyncStatus(handler: (status: SyncStatus) => void): Promise<() => void>
   /** Notes and folders changed by other devices (reload what's shown). */
   onSyncChanged(handler: (ids: Id[]) => void): Promise<() => void>
+
+  /** Items chosen in the macOS menu bar (`new-note`, `search`…; app/src-tauri/src/menu.rs). */
+  onMenuCommand(handler: (command: string) => void): Promise<() => void>
 }
 
 export interface Exported {

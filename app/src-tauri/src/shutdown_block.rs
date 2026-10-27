@@ -80,7 +80,7 @@ unsafe extern "system" fn on_message(
             log::warn!("shutdown: could not tell Windows why it should wait: {e}");
         }
         // Saves, pushes, then exits, which lets shutdown continue.
-        crate::shutdown::on_close_requested(window);
+        crate::shutdown::quit(window);
         return LRESULT(0); // not yet
     }
     // SAFETY: forwards the message unchanged to the next handler.

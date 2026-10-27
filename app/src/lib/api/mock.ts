@@ -532,6 +532,10 @@ export function createMockApi(): Api {
       return () => {}
     },
 
+    async onMenuCommand() {
+      return () => {}
+    },
+
     async cloudStatus() {
       return { ...cloud }
     },

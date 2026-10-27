@@ -78,4 +78,6 @@ export const tauriApi: Api = {
   syncNow: () => invoke('sync_now'),
   onSyncStatus: (handler) => listen<SyncStatus>('sync-status', (e) => handler(e.payload)),
   onSyncChanged: (handler) => listen<Id[]>('sync-changed', (e) => handler(e.payload)),
+
+  onMenuCommand: (handler) => listen<string>('menu-command', (e) => handler(e.payload)),
 }
