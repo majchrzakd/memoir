@@ -12,19 +12,65 @@
 //! changes are pushed in the background, and Quit (⌘Q, see menu.rs) runs
 //! the sequence above.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, Runtime, Window};
+use tokio::sync::watch;
 
 use crate::commands::AppState;
 
-/// Event the UI answers with the `editor_flushed` command.
+/// Event the UI answers with the `editor_flushed` command, passing back the
+/// request number it carries.
 pub const FLUSH_EDITOR_EVENT: &str = "flush-editor";
 const EDITOR_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 const SYNC_FLUSH_TIMEOUT: Duration = Duration::from_secs(15);
 
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+/// Counts how often the window was shown again (macOS), so a close still
+/// saving doesn't hide a window reopened meanwhile.
+static SHOWN: AtomicU64 = AtomicU64::new(0);
+
+/// Requests to save the editor and the UI's answers, matched by number: an
+/// answer that comes after its request timed out never counts for a later
+/// request (whose edits it doesn't cover).
+pub struct EditorFlush {
+    last_request: AtomicU64,
+    /// Highest request number answered.
+    answered: watch::Sender<u64>,
+}
+
+impl Default for EditorFlush {
+    fn default() -> Self {
+        Self {
+            last_request: AtomicU64::new(0),
+            answered: watch::Sender::new(0),
+        }
+    }
+}
+
+impl EditorFlush {
+    /// The UI saved everything up to request `id`.
+    pub fn answered(&self, id: u64) {
+        self.answered.send_if_modified(|answered| {
+            let newer = id > *answered;
+            if newer {
+                *answered = id;
+            }
+            newer
+        });
+    }
+}
+
+/// Quitting has started: nothing may bring the window back.
+pub fn is_shutting_down() -> bool {
+    SHUTTING_DOWN.load(Ordering::SeqCst)
+}
+
+/// Call after showing the window again.
+pub fn window_shown() {
+    SHOWN.fetch_add(1, Ordering::SeqCst);
+}
 
 /// Call from `WindowEvent::CloseRequested` after `api.prevent_close()`.
 pub fn on_close_requested<R: Runtime>(window: &Window<R>) {
@@ -69,10 +115,14 @@ pub fn quit<R: Runtime>(window: &Window<R>) {
 /// Saves and hides the window; the app keeps running (macOS).
 fn hide<R: Runtime>(window: &Window<R>) {
     let window = window.clone();
+    let shown = SHOWN.load(Ordering::SeqCst);
     tauri::async_runtime::spawn(async move {
         let app = window.app_handle();
         save_editor(app).await;
-        if let Err(e) = window.hide() {
+        // Reopened while saving (Dock icon, a menu command): leave it shown.
+        if SHOWN.load(Ordering::SeqCst) == shown
+            && let Err(e) = window.hide()
+        {
             log::warn!("could not hide window on close: {e}");
         }
         app.state::<AppState>().sync.now();
@@ -81,10 +131,12 @@ fn hide<R: Runtime>(window: &Window<R>) {
 
 /// Asks the UI to save edits still waiting for autosave, and waits for it.
 async fn save_editor<R: Runtime>(app: &AppHandle<R>) {
-    match app.emit(FLUSH_EDITOR_EVENT, ()) {
+    let flush = &app.state::<AppState>().editor_flushed;
+    let id = flush.last_request.fetch_add(1, Ordering::SeqCst) + 1;
+    let mut answered = flush.answered.subscribe();
+    match app.emit(FLUSH_EDITOR_EVENT, id) {
         Ok(()) => {
-            let state = app.state::<AppState>();
-            if tokio::time::timeout(EDITOR_FLUSH_TIMEOUT, state.editor_flushed.notified())
+            if tokio::time::timeout(EDITOR_FLUSH_TIMEOUT, answered.wait_for(|&a| a >= id))
                 .await
                 .is_err()
             {

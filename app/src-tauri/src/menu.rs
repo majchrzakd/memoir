@@ -2,12 +2,16 @@
 //! Edit menu is what makes ⌘C/⌘V/⌘Z reach the editor.
 //!
 //! Quit is our own item, not the standard one: the standard item ends the
-//! process at once, skipping the closing sequence (shutdown.rs). Logging
-//! out or quitting from the Dock still ends it at once; changes not pushed
-//! by then stay in the local outbox and go up on next launch.
+//! process at once, skipping the closing sequence (shutdown.rs). Quitting
+//! from the Dock, logging out and shutting down still end it at once: tao
+//! (Tauri's windowing layer) reports them only as `RunEvent::Exit`, which
+//! can't be delayed. Then the last edits not yet autosaved (≤ 300 ms of
+//! typing) are lost, and saved changes not pushed yet stay in the local
+//! outbox and go up on next launch.
 //!
 //! Menu commands for the UI (new note, search, settings…) are sent as the
-//! `menu-command` event with the item's id.
+//! `menu-command` event with the item's id (`MenuCommand` in the UI's
+//! api/types.ts).
 
 use tauri::menu::{AboutMetadata, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -103,12 +107,16 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 }
 
 pub fn on_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
     let id = event.id().as_ref();
     if id == QUIT {
-        crate::shutdown::quit(&window.as_ref().window());
+        match app.get_webview_window("main") {
+            Some(window) => crate::shutdown::quit(&window.as_ref().window()),
+            // Nothing to save from.
+            None => app.exit(0),
+        }
+        return;
+    }
+    if crate::shutdown::is_shutting_down() {
         return;
     }
     if id == SETTINGS.0 || FILE_ITEMS.iter().any(|(item, ..)| *item == id) {

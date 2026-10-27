@@ -16,7 +16,6 @@ use memoir_core::keystore::OsKeychain;
 #[cfg(target_os = "macos")]
 use tauri::{AppHandle, RunEvent, Runtime};
 use tauri::{Manager, WindowEvent};
-use tokio::sync::Notify;
 
 use crate::commands::AppState;
 use crate::session::Session;
@@ -59,7 +58,7 @@ pub fn run() {
                 session: std::sync::Mutex::new(session),
                 cloud: cloud::Cloud::default(),
                 sync: sync::Sync::default(),
-                editor_flushed: Notify::new(),
+                editor_flushed: Default::default(),
             });
             app.manage(update::Updates::default());
             cloud::restore(&app.state::<AppState>());
@@ -141,12 +140,17 @@ pub fn run() {
 }
 
 /// Shows the main window again after it was closed (hidden) on macOS.
+/// Not while quitting: edits made then would be lost when the app exits.
 #[cfg(target_os = "macos")]
 fn show_window<R: Runtime>(app: &AppHandle<R>) {
+    if shutdown::is_shutting_down() {
+        return;
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         if let Err(e) = window.show().and_then(|()| window.set_focus()) {
             log::warn!("could not show window: {e}");
         }
+        shutdown::window_shown();
     }
 }

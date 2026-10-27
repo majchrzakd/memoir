@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api } from '../api'
+  import { api, type MenuCommand } from '../api'
   import { app } from '../app.svelte'
   import Editor from '../editor/Editor.svelte'
   import { keys } from '../platform'
@@ -42,11 +42,26 @@
     }
   }
 
-  function run(command: string) {
-    if (command === 'search') app.searchOpen = true
-    else if (command === 'new-folder') void app.newFolder()
-    else if (command === 'new-note') void app.newNote()
-    else if (command === 'settings') app.view = 'settings'
+  function run(command: MenuCommand) {
+    switch (command) {
+      case 'search':
+        app.searchOpen = true
+        break
+      case 'new-folder':
+        void app.newFolder()
+        break
+      case 'new-note':
+        void app.newNote()
+        break
+      case 'settings':
+        app.view = 'settings'
+        break
+      default: {
+        // Every command is handled (compile error otherwise).
+        const unhandled: never = command
+        console.warn('unknown menu command', unhandled)
+      }
+    }
   }
 
   function onkeydown(e: KeyboardEvent) {

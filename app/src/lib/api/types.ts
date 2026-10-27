@@ -82,6 +82,9 @@ export interface Placement {
   position: Position
 }
 
+/** Items in the macOS menu bar that the UI handles (ids in app/src-tauri/src/menu.rs). */
+export type MenuCommand = 'new-note' | 'new-folder' | 'search' | 'settings'
+
 export interface Api {
   status(): Promise<Status>
   /** Returns the recovery key to show; nothing is saved until finishSetup. */
@@ -185,8 +188,8 @@ export interface Api {
   /** Notes and folders changed by other devices (reload what's shown). */
   onSyncChanged(handler: (ids: Id[]) => void): Promise<() => void>
 
-  /** Items chosen in the macOS menu bar (`new-note`, `search`…; app/src-tauri/src/menu.rs). */
-  onMenuCommand(handler: (command: string) => void): Promise<() => void>
+  /** Items chosen in the macOS menu bar. */
+  onMenuCommand(handler: (command: MenuCommand) => void): Promise<() => void>
 }
 
 export interface Exported {

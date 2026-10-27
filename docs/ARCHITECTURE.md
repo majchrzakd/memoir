@@ -563,9 +563,15 @@ Same code; the differences are in the Tauri shell.
   and changes are pushed in the background — and clicking the Dock icon
   shows it again. Quit (⌘Q, or Memoir → Quit Memoir) runs the full closing
   sequence. Quit is Memoir's own menu item because the standard one ends the
-  process at once (tao has no `applicationShouldTerminate`); quitting from
-  the Dock, logging out or shutting down still do, so changes not pushed yet
-  go up on next launch (they are safe in the local outbox).
+  process at once (tao has no `applicationShouldTerminate`). Quitting from
+  the Dock, logging out and shutting down still end it at once (tao reports
+  them only as `RunEvent::Exit`, which can't be delayed): the last edits
+  not yet autosaved (≤ 300 ms of typing) are lost, and saved changes not
+  pushed yet go up on next launch (they are safe in the local outbox).
+  While quitting, neither the Dock icon nor a menu command shows the window
+  again; a close still saving doesn't hide a window reopened meanwhile.
+  Requests to save the editor are numbered, so a late answer to one that
+  timed out never counts for the next.
 - **Menu bar** (`menu.rs`): Memoir (About, Settings… ⌘,, Services, Hide,
   Quit), File (New Note ⌘N, New Folder ⇧⌘N, Search… ⌘K, Close Window),
   the standard Edit menu (which is what makes ⌘C/⌘V/⌘Z work in the
