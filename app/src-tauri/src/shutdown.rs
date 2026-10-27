@@ -63,11 +63,13 @@ impl EditorFlush {
 }
 
 /// Quitting has started: nothing may bring the window back.
+#[cfg(target_os = "macos")]
 pub fn is_shutting_down() -> bool {
     SHUTTING_DOWN.load(Ordering::SeqCst)
 }
 
 /// Call after showing the window again.
+#[cfg(target_os = "macos")]
 pub fn window_shown() {
     SHOWN.fetch_add(1, Ordering::SeqCst);
 }
