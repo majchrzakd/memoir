@@ -26,7 +26,7 @@ account whose Drive will hold your notes.
    treats the secret as non-confidential; PKCE protects the flow. Still, keep
    it out of git.)
 
-## 4. Publish — later, before daily use (M8)
+## 4. Publish (done 2026-10-27: "In production", site verified)
 **Skip this during development.** "Testing" status works fully for your own
 account (listed under **Test users**); the only drawback is that Google
 expires refresh tokens after 7 days, so you have to sign in again weekly.
