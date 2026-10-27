@@ -54,6 +54,14 @@ body {
   overflow: hidden;
 }
 
+/* Touch screens: larger text, which also keeps iOS from zooming into a text
+   field when it gets focus (it does below 16px). */
+@media (pointer: coarse) {
+  :root {
+    font-size: 16px;
+  }
+}
+
 button,
 input {
   font: inherit;

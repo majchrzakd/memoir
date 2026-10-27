@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, type LaterItem } from '../api'
   import { app } from '../app.svelte'
-  import { keys } from '../platform'
+  import { keys, touch } from '../platform'
   import Icon from '../ui/Icon.svelte'
   import LaterList from './LaterList.svelte'
   import SyncIndicator from './SyncIndicator.svelte'
@@ -39,7 +39,7 @@
   <button class="search" onclick={() => (app.searchOpen = true)}>
     <Icon name="search" />
     <span>Search</span>
-    <kbd>{keys('Ctrl+K')}</kbd>
+    {#if !touch.current}<kbd>{keys('Ctrl+K')}</kbd>{/if}
   </button>
 
   <div class="tabs" role="tablist" aria-label="Sidebar">
@@ -68,7 +68,7 @@
 
   <UpdateNotice />
   <footer>
-    <button class="trash" class:active={app.view === 'trash'} onclick={() => (app.view = 'trash')}>
+    <button class="trash" class:active={app.view === 'trash'} onclick={() => app.show('trash')}>
       <Icon name="trash" />
       <span>Trash</span>
     </button>
@@ -78,7 +78,7 @@
       class:active={app.view === 'settings'}
       title="Settings"
       aria-label="Settings"
-      onclick={() => (app.view = 'settings')}
+      onclick={() => app.show('settings')}
     >
       <Icon name="settings" size={18} />
     </button>

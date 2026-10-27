@@ -155,6 +155,13 @@
     background: var(--bg-hover);
   }
 
+  /* Phones never have room for the side column. */
+  @media (max-width: 700px) {
+    .layout {
+      display: none;
+    }
+  }
+
   .layout button {
     padding: 1px 9px;
     border: none;

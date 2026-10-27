@@ -213,4 +213,22 @@
     background: var(--bg-selected);
     color: var(--text);
   }
+
+  /* Phone: one row that scrolls sideways, with finger-sized buttons. */
+  @media (max-width: 700px) {
+    .toolbar {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      padding: 4px 8px;
+    }
+
+    .group {
+      flex: none;
+    }
+
+    .tool {
+      min-width: 40px;
+      height: 40px;
+    }
+  }
 </style>

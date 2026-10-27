@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type CloudStatus, type Exported } from './api'
   import { app, errorMessage } from './app.svelte'
+  import { isIOS } from './platform'
   import { localDate, sinceTime } from './time'
   import Icon from './ui/Icon.svelte'
 
@@ -174,40 +175,42 @@
     {#if error}<p class="error">{error}</p>{/if}
   </article>
 
-  <article class="card">
-    <header>
-      <h2>Export</h2>
-    </header>
-    <p>
-      Save the whole notebook as Markdown files that any editor can open: a folder per folder, a
-      file per note (with its replies), attachments and the trash.
-    </p>
-    <p class="muted">
-      The export is not encrypted. Keep it somewhere safe, or delete it when you're done.
-    </p>
-    {#if exported}
-      {@const s = exported.summary}
+  {#if !isIOS}
+    <article class="card">
+      <header>
+        <h2>Export</h2>
+      </header>
       <p>
-        Exported {plural(s.notes, 'note')}, {plural(s.folders, 'folder')} and
-        {plural(s.attachments, 'attachment')} to <code>{exported.path}</code>.
+        Save the whole notebook as Markdown files that any editor can open: a folder per folder, a
+        file per note (with its replies), attachments and the trash.
       </p>
-      {#if s.missing_attachments}
-        <p class="muted">
-          {plural(s.missing_attachments, 'attachment')} weren't on this device yet, so their links point
-          nowhere in the export.
-        </p>
-      {/if}
-    {/if}
-    <div class="actions">
-      <button class="primary" disabled={exporting} onclick={exportNotebook}>
-        {exporting ? 'Exporting…' : 'Export to Markdown…'}
-      </button>
+      <p class="muted">
+        The export is not encrypted. Keep it somewhere safe, or delete it when you're done.
+      </p>
       {#if exported}
-        <button onclick={() => exported && api.showExport(exported.path)}>Show in folder</button>
+        {@const s = exported.summary}
+        <p>
+          Exported {plural(s.notes, 'note')}, {plural(s.folders, 'folder')} and
+          {plural(s.attachments, 'attachment')} to <code>{exported.path}</code>.
+        </p>
+        {#if s.missing_attachments}
+          <p class="muted">
+            {plural(s.missing_attachments, 'attachment')} weren't on this device yet, so their links point
+            nowhere in the export.
+          </p>
+        {/if}
       {/if}
-    </div>
-    {#if exportError}<p class="error">{exportError}</p>{/if}
-  </article>
+      <div class="actions">
+        <button class="primary" disabled={exporting} onclick={exportNotebook}>
+          {exporting ? 'Exporting…' : 'Export to Markdown…'}
+        </button>
+        {#if exported}
+          <button onclick={() => exported && api.showExport(exported.path)}>Show in folder</button>
+        {/if}
+      </div>
+      {#if exportError}<p class="error">{exportError}</p>{/if}
+    </article>
+  {/if}
 
   <article class="card">
     <header>
@@ -218,23 +221,27 @@
       If something goes wrong, the log helps find out why. It records what Memoir did (like sync
       rounds and errors), never the content of your notes.
     </p>
-    {#if app.update}
+    {#if isIOS}
+      <!-- Updates come from the App Store or TestFlight; no folders to open. -->
+    {:else if app.update}
       <p>Memoir {app.update.version} is available.</p>
     {:else if checkResult}
       <p class="muted">{checkResult}</p>
     {/if}
-    <div class="actions">
-      {#if app.update}
-        <button class="primary" onclick={() => app.installUpdate().catch((e) => app.fail(e))}>
-          Restart to update
-        </button>
-      {:else}
-        <button disabled={checking} onclick={checkForUpdate}>
-          {checking ? 'Checking…' : 'Check for updates'}
-        </button>
-      {/if}
-      <button onclick={() => api.showLogs().catch((e) => app.fail(e))}>Open log folder</button>
-    </div>
+    {#if !isIOS}
+      <div class="actions">
+        {#if app.update}
+          <button class="primary" onclick={() => app.installUpdate().catch((e) => app.fail(e))}>
+            Restart to update
+          </button>
+        {:else}
+          <button disabled={checking} onclick={checkForUpdate}>
+            {checking ? 'Checking…' : 'Check for updates'}
+          </button>
+        {/if}
+        <button onclick={() => api.showLogs().catch((e) => app.fail(e))}>Open log folder</button>
+      </div>
+    {/if}
   </article>
 </section>
 
@@ -243,6 +250,12 @@
     height: 100%;
     overflow-y: auto;
     padding: 28px max(40px, calc((100% - 760px) / 2));
+  }
+
+  @media (max-width: 700px) {
+    .settings {
+      padding: 16px;
+    }
   }
 
   h1 {

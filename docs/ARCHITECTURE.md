@@ -597,7 +597,18 @@ Tauri's iOS build of the same app; the Xcode project is generated into
 - **Not on iOS:** the updater (the App Store or TestFlight updates the app),
   the menu bar and window close/quit handling, and Export to Markdown for
   now (no folder picker; it will go through the Files app).
-- **Still to do:** phone layout, Google sign-in (desktop uses a loopback
-  redirect, which iOS doesn't allow: needs an iOS OAuth client and a custom
-  URL scheme), save and push when the app goes to the background (there is
-  no "closing" on iOS), share sheet for attachments and export.
+- **Phone layout** (`app/src/lib/platform.ts`: `phone` = window ≤ 700 px,
+  `touch` = coarse pointer): one pane at a time — the list, or the note /
+  trash / settings with a "‹ Notes" back button (`app.listShown`, both panes
+  stay mounted so the editor keeps its state); 44 px tree rows with a ⋯
+  button for the row menu (no right-click on touch); a one-row scrolling
+  toolbar; no keyboard hints; safe-area padding (`viewport-fit=cover`);
+  16 px text on touch screens, which also stops iOS zooming into focused
+  fields. A narrow desktop window gets the same one-pane layout.
+- **Leaving the app** (`visibilitychange`): the editor is saved and a sync
+  starts; coming back pulls. iOS may suspend the app a few seconds later,
+  and anything not pushed by then goes up on the next sync.
+- **Still to do:** Google sign-in (desktop uses a loopback redirect, which
+  iOS doesn't allow: needs an iOS OAuth client and a custom URL scheme), a
+  background task so a push can finish after leaving the app, moving notes
+  without drag & drop, share sheet for attachments and export.

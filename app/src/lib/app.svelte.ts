@@ -56,6 +56,8 @@ interface ConfirmRequest {
 class App {
   screen = $state<Screen>('loading')
   view = $state<View>('note')
+  /** Phone layout: the notes list is shown instead of the note, trash or settings. */
+  listShown = $state(true)
 
   items = $state.raw<TreeItem[]>([])
   expanded = new SvelteSet<Id>(load<Id[]>(EXPANDED_KEY, []))
@@ -124,6 +126,12 @@ class App {
     this.sync = await api.syncStatus()
     await api.onUpdateAvailable((update) => (this.update = update))
     this.update = await api.availableUpdate()
+    // iOS has no "closing": leaving the app is the moment to save and push
+    // (it may be suspended a few seconds later). Coming back pulls.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) void this.flushEditor().finally(() => void api.syncNow())
+      else void api.syncNow()
+    })
   }
 
   /** Other devices changed these notes or folders. */
@@ -177,7 +185,19 @@ class App {
 
   // ---- Actions -----------------------------------------------------------
 
+  /** Shows the trash or settings (on a phone, instead of the list). */
+  show(view: View) {
+    this.view = view
+    this.listShown = false
+  }
+
+  /** Phone layout: back to the notes list. */
+  back() {
+    this.listShown = true
+  }
+
   async openNote(id: Id) {
+    this.listShown = false
     if (id === this.openNoteId && this.view === 'note') return
     await this.flushEditor()
     this.view = 'note'
