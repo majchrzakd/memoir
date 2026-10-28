@@ -34,6 +34,14 @@
     >
       <Icon name="folderPlus" size={18} />
     </button>
+    <button
+      class="icon"
+      title="Lock ({keys('Ctrl+L')})"
+      aria-label="Lock"
+      onclick={() => app.lock()}
+    >
+      <Icon name="lock" size={18} />
+    </button>
   </header>
 
   <button class="search" onclick={() => (app.searchOpen = true)}>

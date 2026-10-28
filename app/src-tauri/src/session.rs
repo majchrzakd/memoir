@@ -251,6 +251,61 @@ impl Session {
         Ok(())
     }
 
+    /// Closes the notebook: the database, the keys and decrypted copies of
+    /// opened attachments are gone until it's unlocked again, which needs
+    /// the passphrase (or recovery key) even on a trusted device. Opening
+    /// Memoir afresh still unlocks by itself there.
+    pub fn lock(&mut self) {
+        self.store = None;
+        self.blobs = None;
+        self.keys = None;
+        self.pending = None;
+        self.clear_opened_files();
+    }
+
+    /// Checks the current passphrase and sets a new one; the recovery key
+    /// keeps working. Returns the updated vault file, for the cloud copy.
+    pub fn change_passphrase(&mut self, current: &str, new: &str) -> Result<VaultFile> {
+        let file = self.vault_file()?;
+        let vault = file.unlock(current)?;
+        let updated = vault.change_passphrase(&file, new, self.kdf)?;
+        self.save_vault_file(&updated, &vault)?;
+        Ok(updated)
+    }
+
+    /// Checks the passphrase and issues a new recovery key; the old one
+    /// stops working. Returns the key to show once and the updated vault
+    /// file, for the cloud copy.
+    pub fn new_recovery_key(&mut self, passphrase: &str) -> Result<(Zeroizing<String>, VaultFile)> {
+        let file = self.vault_file()?;
+        let vault = file.unlock(passphrase)?;
+        let (updated, recovery_key) = vault.replace_recovery_key(&file);
+        self.save_vault_file(&updated, &vault)?;
+        Ok((recovery_key.to_text(), updated))
+    }
+
+    /// Takes over a vault file from the cloud when it's a signed, newer
+    /// version of this one (the passphrase or recovery key was changed on
+    /// another device). Returns whether it did.
+    pub fn adopt_vault_file(&mut self, remote: &VaultFile) -> Result<bool> {
+        let local = self.vault_file()?;
+        if !remote.supersedes(&local, &self.keys()?) {
+            return Ok(false);
+        }
+        let (_, vault) = self
+            .store()?
+            .load_vault()?
+            .ok_or(SessionError::WrongState("database has no vault"))?;
+        self.save_vault_file(remote, &vault)?;
+        Ok(true)
+    }
+
+    fn save_vault_file(&mut self, file: &VaultFile, vault: &UnlockedVault) -> Result<()> {
+        self.store()?.save_vault(file, vault)?;
+        write_atomically(&self.vault_path(), file.to_json().as_bytes())?;
+        Ok(())
+    }
+
     fn try_auto_unlock(&mut self) -> Result<()> {
         if !self.vault_path().exists() {
             return Ok(());
@@ -492,6 +547,79 @@ mod tests {
         let mut s = session(dir.path(), &keychain);
         assert!(s.unlock(PASS, false).is_err());
         s.unlock("a new passphrase", false).unwrap();
+    }
+
+    #[test]
+    fn locking_closes_the_notebook_until_the_passphrase_is_entered() {
+        let dir = tempfile::tempdir().unwrap();
+        let keychain = Arc::new(MemoryStore::default());
+        set_up(dir.path(), &keychain); // remembered on this device
+        let mut s = session(dir.path(), &keychain);
+        assert_eq!(s.status(), Status::Unlocked);
+        std::fs::create_dir_all(s.opened_dir()).unwrap();
+        std::fs::write(s.opened_dir().join("photo.png"), b"decrypted").unwrap();
+
+        s.lock();
+        assert_eq!(s.status(), Status::Locked);
+        assert!(matches!(s.store(), Err(SessionError::Locked)));
+        assert!(matches!(s.keys(), Err(SessionError::Locked)));
+        assert!(!s.opened_dir().exists(), "opened attachments removed");
+        assert!(s.unlock("wrong passphrase", true).is_err());
+        s.unlock(PASS, true).unwrap();
+        assert_eq!(s.store().unwrap().tree().unwrap()[0].title, "Hello");
+    }
+
+    #[test]
+    fn passphrase_and_recovery_key_can_be_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let keychain = Arc::new(MemoryStore::default());
+        let old_rk = set_up(dir.path(), &keychain);
+        let mut s = session(dir.path(), &keychain);
+
+        assert!(matches!(
+            s.change_passphrase("not it", "a new passphrase"),
+            Err(SessionError::Vault(_))
+        ));
+        s.change_passphrase(PASS, "a new passphrase").unwrap();
+        let (new_rk, _) = s.new_recovery_key("a new passphrase").unwrap();
+
+        let mut s = session(dir.path(), &Arc::new(MemoryStore::default()));
+        assert!(s.unlock(PASS, false).is_err());
+        s.unlock("a new passphrase", false).unwrap();
+        s.lock();
+        assert!(
+            s.unlock_with_recovery_key(&old_rk, "another passphrase", false)
+                .is_err()
+        );
+        s.unlock_with_recovery_key(&new_rk, "another passphrase", false)
+            .unwrap();
+    }
+
+    #[test]
+    fn a_change_on_one_device_is_adopted_by_another() {
+        let a_dir = tempfile::tempdir().unwrap();
+        let a_keys = Arc::new(MemoryStore::default());
+        set_up(a_dir.path(), &a_keys);
+        let mut a = session(a_dir.path(), &a_keys);
+        let original = a.vault_file().unwrap();
+
+        let b_dir = tempfile::tempdir().unwrap();
+        let mut b = session(b_dir.path(), &Arc::new(MemoryStore::default()));
+        b.join(&original, PASS, false).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let changed = a.change_passphrase(PASS, "a new passphrase").unwrap();
+        assert!(!b.adopt_vault_file(&original).unwrap(), "nothing new");
+        let mut forged = changed.clone();
+        forged.updated_at = Some(i64::MAX);
+        assert!(!b.adopt_vault_file(&forged).unwrap(), "tampered");
+        assert!(b.adopt_vault_file(&changed).unwrap());
+        assert!(!b.adopt_vault_file(&original).unwrap(), "no rollback");
+
+        b.lock();
+        assert!(b.unlock(PASS, false).is_err());
+        b.unlock("a new passphrase", false).unwrap();
+        assert_eq!(b.vault_file().unwrap(), changed);
     }
 
     #[test]

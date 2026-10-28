@@ -37,6 +37,8 @@ interface Obj {
 }
 
 const MOCK_PASSPHRASE = 'correct horse'
+/** Set by changePassphrase (the original keeps working too, for demos). */
+let mockPassphrase = MOCK_PASSPHRASE
 
 export function createMockApi(): Api {
   const objects = new Map<Id, Obj>()
@@ -261,8 +263,20 @@ export function createMockApi(): Api {
     async finishSetup() {
       status = 'unlocked'
     },
+    async lock() {
+      status = 'locked'
+    },
+    async changePassphrase(current, newPassphrase) {
+      if (current !== MOCK_PASSPHRASE) throw 'wrong passphrase'
+      if ([...newPassphrase].length < 8) throw 'the passphrase must have at least 8 characters'
+      mockPassphrase = newPassphrase
+    },
+    async newRecoveryKey(passphrase) {
+      if (passphrase !== MOCK_PASSPHRASE && passphrase !== mockPassphrase) throw 'wrong passphrase'
+      return 'MOCK1-2345-6789-ABCD-EFGH-JKMN-PQRS-TVWX-YZ01'
+    },
     async unlock(passphrase) {
-      if (passphrase !== MOCK_PASSPHRASE) throw 'wrong passphrase'
+      if (passphrase !== MOCK_PASSPHRASE && passphrase !== mockPassphrase) throw 'wrong passphrase'
       status = 'unlocked'
     },
     async unlockWithRecoveryKey(recoveryKey) {

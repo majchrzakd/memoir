@@ -83,7 +83,7 @@ export interface Placement {
 }
 
 /** Items in the macOS menu bar that the UI handles (ids in app/src-tauri/src/menu.rs). */
-export type MenuCommand = 'new-note' | 'new-folder' | 'search' | 'settings'
+export type MenuCommand = 'new-note' | 'new-folder' | 'search' | 'settings' | 'lock'
 
 export interface Api {
   status(): Promise<Status>
@@ -96,6 +96,12 @@ export interface Api {
     newPassphrase: string,
     remember: boolean,
   ): Promise<void>
+  /** Closes the notebook; unlocking needs the passphrase again. */
+  lock(): Promise<void>
+  /** Checks the current passphrase and sets a new one. */
+  changePassphrase(current: string, newPassphrase: string): Promise<void>
+  /** Checks the passphrase; returns a new recovery key (the old one stops working). */
+  newRecoveryKey(passphrase: string): Promise<string>
   /** Called when the app is closing; the handler must save pending edits. */
   onFlushRequest(handler: () => Promise<void>): Promise<() => void>
 

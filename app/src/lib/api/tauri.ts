@@ -11,6 +11,10 @@ export const tauriApi: Api = {
   unlockWithRecoveryKey: (recoveryKey, newPassphrase, remember) =>
     invoke('unlock_with_recovery_key', { recoveryKey, newPassphrase, remember }),
   // The request's number goes back with the answer (shutdown.rs).
+  lock: () => invoke('lock'),
+  changePassphrase: (current, newPassphrase) =>
+    invoke('change_passphrase', { current, newPassphrase }),
+  newRecoveryKey: (passphrase) => invoke('new_recovery_key', { passphrase }),
   onFlushRequest: (handler) =>
     listen<number>('flush-editor', async (e) => {
       try {

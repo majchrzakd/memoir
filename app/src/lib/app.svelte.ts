@@ -21,6 +21,7 @@ type View = 'note' | 'trash' | 'settings'
 export const SYNCED_EVENT = 'memoir-synced'
 
 const EXPANDED_KEY = 'memoir.expanded'
+const AUTO_LOCK_KEY = 'memoir.autoLockMinutes'
 const OPEN_NOTE_KEY = 'memoir.openNote'
 const THREAD_LAYOUT_KEY = 'memoir.threadLayout'
 
@@ -84,6 +85,10 @@ class App {
   /** The user closed the update notice for this session. */
   updateDismissed = $state(false)
 
+  /** Lock after this many idle minutes (0: never). A per-device preference. */
+  autoLockMinutes = $state<number>(load(AUTO_LOCK_KEY, 0))
+  private lastActivity = Date.now()
+
   searchOpen = $state(false)
   confirmRequest = $state<ConfirmRequest | null>(null)
   error = $state<string | null>(null)
@@ -107,6 +112,7 @@ class App {
 
   /** Called once the vault is unlocked. */
   async enter() {
+    this.noteActivity()
     await this.listenToSync()
     await this.refreshTree()
     if (this.openNoteId && this.byId.get(this.openNoteId)?.kind !== 'note') this.openNoteId = null
@@ -143,6 +149,45 @@ class App {
 
   syncNow() {
     void api.syncNow().catch((e) => this.fail(e))
+  }
+
+  /** Saves, then closes the notebook: back to the unlock screen. */
+  async lock() {
+    if (this.screen !== 'unlocked') return
+    await this.flushEditor().catch(() => {})
+    try {
+      await api.lock()
+    } catch (e) {
+      this.fail(e)
+      return
+    }
+    // Nothing from the notebook stays in memory.
+    this.items = []
+    this.replyDrafts.clear()
+    this.searchOpen = false
+    this.confirmRequest?.resolve(false)
+    this.attachmentMenu = null
+    this.view = 'note'
+    this.screen = 'locked'
+  }
+
+  setAutoLock(minutes: number) {
+    this.autoLockMinutes = minutes
+    persist(AUTO_LOCK_KEY, minutes)
+    this.noteActivity()
+  }
+
+  /** Keyboard, mouse or touch use; resets the auto-lock countdown. */
+  noteActivity() {
+    this.lastActivity = Date.now()
+  }
+
+  /** Called every few seconds: locks once idle long enough. */
+  checkIdle(now = Date.now()) {
+    const minutes = this.autoLockMinutes
+    if (minutes > 0 && this.screen === 'unlocked' && now - this.lastActivity >= minutes * 60_000) {
+      void this.lock()
+    }
   }
 
   fail(e: unknown) {

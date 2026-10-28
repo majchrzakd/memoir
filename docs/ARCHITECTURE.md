@@ -149,6 +149,25 @@ The local DB is **SQLCipher** (encrypted SQLite); local blob cache is stored
 encrypted in the same envelope format. A stolen laptop disk reveals nothing
 without the keychain entry / passphrase.
 
+### Locking, passphrase and recovery key changes
+- **Lock** (sidebar button, Ctrl/⌘+L, Mac menu, or automatically after N idle
+  minutes, Settings → Security): the database closes and the keys leave
+  memory (`Session::lock`); decrypted copies of opened attachments are
+  deleted; the UI drops what it showed. Unlocking needs the passphrase or
+  recovery key, even on a device that remembers the key — that only skips
+  the passphrase when Memoir starts.
+- **Change passphrase / new recovery key** (Settings → Security, both after
+  checking the current passphrase) re-wrap the master key, so nothing is
+  re-encrypted. The new `vault.json` is stamped (`updated_at`) and signed
+  with a key derived from the master key (`mac`, see FORMAT.md) and
+  uploaded; the copy in Drive is replaced.
+- **Other devices** compare their `vault.json` with Drive's at the start of
+  a session, after unlocking and after such a change
+  (`cloud::reconcile_vault`). They adopt Drive's copy only if it's signed by
+  the master key and newer, so a copy planted or rolled back in Drive is
+  ignored. Until a device has synced once, it still opens with the old
+  passphrase (and the old recovery key still works there).
+
 ---
 
 ## 5. Local storage

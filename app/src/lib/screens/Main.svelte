@@ -53,6 +53,9 @@
       case 'new-note':
         void app.newNote()
         break
+      case 'lock':
+        void app.lock()
+        break
       case 'settings':
         app.view = 'settings'
         break
@@ -72,6 +75,8 @@
       run('new-folder')
     } else if (ctrl && e.key === 'n') {
       run('new-note')
+    } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'l') {
+      run('lock')
     } else {
       return
     }
@@ -82,6 +87,18 @@
   onMount(() => {
     const stop = api.onMenuCommand(run)
     return () => void stop.then((unlisten) => unlisten())
+  })
+
+  // Auto-lock (Settings → Security): any use of the window counts as activity.
+  onMount(() => {
+    const active = () => app.noteActivity()
+    const events = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'] as const
+    for (const name of events) window.addEventListener(name, active, { passive: true })
+    const timer = setInterval(() => app.checkIdle(), 15_000)
+    return () => {
+      for (const name of events) window.removeEventListener(name, active)
+      clearInterval(timer)
+    }
   })
 </script>
 

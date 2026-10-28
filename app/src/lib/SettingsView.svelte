@@ -2,6 +2,7 @@
   import { api, type CloudStatus, type Exported } from './api'
   import { app, errorMessage } from './app.svelte'
   import { localDate, sinceTime } from './time'
+  import SecuritySettings from './SecuritySettings.svelte'
   import Icon from './ui/Icon.svelte'
 
   let cloud = $state<CloudStatus | null>(null)
@@ -173,6 +174,8 @@
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
   </article>
+
+  <SecuritySettings />
 
   <article class="card">
     <header>

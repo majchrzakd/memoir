@@ -84,6 +84,13 @@ impl Sync {
         self.changed.notify_one();
     }
 
+    /// Checks the Drive folder and `vault.json` again next round (after
+    /// unlocking, or a passphrase / recovery key change), and syncs now.
+    pub fn recheck_cloud(&self) {
+        self.folders_checked.store(false, Ordering::SeqCst);
+        self.now();
+    }
+
     pub fn focused(&self) {
         let mut last = self.last_focus_sync.lock().expect("lock");
         if last.is_none_or(|t| t.elapsed() >= FOCUS_MIN_GAP) {

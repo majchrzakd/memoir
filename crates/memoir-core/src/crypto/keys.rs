@@ -105,6 +105,9 @@ pub struct Keyring {
     pub blob_id: SecretKey,
     /// SQLCipher key for the local database.
     pub local_db: SecretKey,
+    /// Signs `vault.json` changes, so other devices accept a new passphrase
+    /// or recovery key only from someone holding the master key.
+    pub vault_mac: SecretKey,
 }
 
 impl Keyring {
@@ -115,6 +118,7 @@ impl Keyring {
             blob: master.derive(b"memoir/v1/blob"),
             blob_id: master.derive(b"memoir/v1/blob-id"),
             local_db: master.derive(b"memoir/v1/local-db"),
+            vault_mac: master.derive(b"memoir/v1/vault-mac"),
         }
     }
 }
@@ -139,7 +143,7 @@ pub(crate) mod tests {
         let b = Keyring::derive(&master, 1);
         assert_eq!(a.object.as_bytes(), b.object.as_bytes());
 
-        let all = [&a.object, &a.blob, &a.blob_id, &a.local_db];
+        let all = [&a.object, &a.blob, &a.blob_id, &a.local_db, &a.vault_mac];
         for (i, x) in all.iter().enumerate() {
             assert_ne!(x.as_bytes(), master.as_bytes());
             for y in &all[i + 1..] {

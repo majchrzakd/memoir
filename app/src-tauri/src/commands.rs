@@ -74,7 +74,7 @@ pub fn unlock(state: State<'_, AppState>, passphrase: String, remember: bool) ->
         .unlock(&passphrase, remember)
         .map_err(|e| e.to_string())?;
     crate::cloud::restore(&state);
-    state.sync.now();
+    state.sync.recheck_cloud();
     Ok(())
 }
 
@@ -90,8 +90,45 @@ pub fn unlock_with_recovery_key(
         .unlock_with_recovery_key(&recovery_key, &new_passphrase, remember)
         .map_err(|e| e.to_string())?;
     crate::cloud::restore(&state);
-    state.sync.now();
+    // The new passphrase goes to Drive for the other devices.
+    state.sync.recheck_cloud();
     Ok(())
+}
+
+/// Locks the notebook (see `Session::lock`). The UI saves the editor first.
+#[tauri::command(async)]
+pub fn lock(state: State<'_, AppState>) -> CmdResult<()> {
+    state.session()?.lock();
+    state.sync.now(); // reports "off" while locked
+    Ok(())
+}
+
+/// Checks the current passphrase and sets a new one; other devices pick it
+/// up through Drive.
+#[tauri::command(async)]
+pub fn change_passphrase(
+    state: State<'_, AppState>,
+    current: String,
+    new_passphrase: String,
+) -> CmdResult<()> {
+    state
+        .session()?
+        .change_passphrase(&current, &new_passphrase)
+        .map_err(|e| e.to_string())?;
+    state.sync.recheck_cloud();
+    Ok(())
+}
+
+/// Checks the passphrase and returns a new recovery key (shown once); the
+/// old one stops working, on other devices once they've synced.
+#[tauri::command(async)]
+pub fn new_recovery_key(state: State<'_, AppState>, passphrase: String) -> CmdResult<String> {
+    let (key, _) = state
+        .session()?
+        .new_recovery_key(&passphrase)
+        .map_err(|e| e.to_string())?;
+    state.sync.recheck_cloud();
+    Ok(key.to_string())
 }
 
 #[tauri::command(async)]
