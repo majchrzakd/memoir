@@ -511,6 +511,46 @@ impl Store {
         self.create(Kind::Note, placement, title, body)
     }
 
+    /// A note brought in from elsewhere (an import): keeps its own creation
+    /// and edit times and its tags.
+    pub fn create_imported_note(
+        &mut self,
+        placement: Placement,
+        title: &str,
+        body: &str,
+        created_at: i64,
+        updated_at: i64,
+        tags: &[String],
+    ) -> Result<ObjectId> {
+        let now = self.now();
+        let id = ObjectId::generate();
+        let tags = serde_json::to_string(&clean_tags(tags)).expect("tags serialize");
+        let tx = self.conn.savepoint()?;
+        let sort_key = place(&tx, placement, None)?;
+        tx.execute(
+            "INSERT INTO objects (id, kind, parent_id, title, sort_key, tags, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id,
+                Kind::Note.code(),
+                placement.parent,
+                title,
+                sort_key,
+                tags,
+                created_at,
+                updated_at
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO note_bodies (seq, body) VALUES (?1, ?2)",
+            params![tx.last_insert_rowid(), body],
+        )?;
+        index_note(&tx, &id)?;
+        changed(&tx, &id, now, &self.device, Field::ALL)?;
+        tx.commit()?;
+        Ok(id)
+    }
+
     fn create(
         &mut self,
         kind: Kind,
@@ -805,12 +845,7 @@ impl Store {
     /// ignoring case, order kept).
     pub fn set_tags(&mut self, id: &ObjectId, tags: &[String]) -> Result<()> {
         let old = self.note(id)?;
-        let mut seen = HashSet::new();
-        let tags: Vec<String> = tags
-            .iter()
-            .map(|t| t.trim().to_owned())
-            .filter(|t| !t.is_empty() && seen.insert(t.to_lowercase()))
-            .collect();
+        let tags = clean_tags(tags);
         if tags == old.tags {
             return Ok(());
         }
@@ -1190,6 +1225,15 @@ fn ancestors(conn: &Connection, id: &ObjectId) -> Result<Vec<(ObjectId, Option<i
 /// Computes the sort key for an item placed at `placement`, checking that
 /// the target folder exists, is a folder, is not in the trash and â€” when
 /// `moving` an existing item â€” is not that item or inside it.
+/// Tags trimmed, empty ones dropped, de-duplicated ignoring case, order kept.
+fn clean_tags(tags: &[String]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    tags.iter()
+        .map(|t| t.trim().to_owned())
+        .filter(|t| !t.is_empty() && seen.insert(t.to_lowercase()))
+        .collect()
+}
+
 fn place(tx: &Connection, placement: Placement, moving: Option<&ObjectId>) -> Result<String> {
     if let Some(parent) = &placement.parent {
         if object_kind(tx, parent)? != Kind::Folder {

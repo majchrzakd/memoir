@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { Api, Id, MenuCommand, SyncStatus, UpdateInfo } from './types'
+import type { Api, Id, ImportProgress, MenuCommand, SyncStatus, UpdateInfo } from './types'
 
 /** The real backend: Tauri commands (app/src-tauri/src/commands.rs). */
 export const tauriApi: Api = {
@@ -70,6 +70,9 @@ export const tauriApi: Api = {
 
   exportNotebook: (name) => invoke('export_notebook', { name }),
   showExport: (path) => invoke('show_export', { path }),
+  importEvernote: () => invoke('import_evernote'),
+  onImportProgress: (handler) =>
+    listen<ImportProgress>('import-progress', (e) => handler(e.payload)),
 
   appInfo: () => invoke('app_info'),
   showLogs: () => invoke('show_logs'),

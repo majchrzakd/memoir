@@ -7,6 +7,7 @@ pub mod blobs;
 pub mod crypto;
 pub mod db;
 pub mod export;
+pub mod import;
 pub mod keystore;
 pub mod remote;
 pub mod store;

@@ -55,6 +55,7 @@ this choice is low-risk and reversible.
 │   store   — SQLCipher DB: tree, notes, FTS5, outbox         │
 │   sync    — revision DAG, push/pull, merge, GC              │
 │   export  — decrypted Markdown export                       │
+│   import  — Evernote (.enex) import                         │
 ├─────────────────────────────────────────────────────────────┤
 │ memoir-gdrive — StorageProvider impl (OAuth PKCE, REST v3)  │
 │ memoir-cli    — offline recovery/export tool                │
@@ -430,6 +431,20 @@ never assumes a just-made change is already visible to other devices.
   from the type); the trash goes to `Trash/`. File names are made safe for
   Windows/macOS/Linux and de-duplicated; note files keep their edit time.
   The export is plain text by design, and the app says so.
+- **Import from Evernote** (Settings → Import from Evernote; `memoir_core::import`):
+  the user picks one or more `.enex` files (Evernote's notebook export); each
+  becomes a top-level folder named after the file. The file is streamed note
+  by note (quick-xml), so large exports don't load into memory, and the
+  notebook is locked only one note at a time, so the app and sync keep
+  working meanwhile. A note keeps its title, created/updated dates and tags.
+  ENML becomes the editor's own Markdown dialect, exactly as the editor would
+  save it (a vitest round-trips samples to check): headings, bold/italic/
+  strike/code, links, lists and both kinds of Evernote checklists, tables,
+  code blocks, quotes and rules; anything else keeps its text. Resources
+  become attachments, matched to `en-media` by MD5; images show inline, other
+  files as links, and resources the content never references are appended.
+  Evernote-encrypted text and attachments over the 100 MB limit can't be
+  imported; the note says where they were and the summary counts them.
 - **`memoir decrypt <folder> --out <dir> [--recovery-key]`** (`crates/memoir-cli`):
   given a downloaded copy of the `Memoir/` Drive folder (or the folder the
   Drive zip was extracted into) and the passphrase or recovery key, it reads

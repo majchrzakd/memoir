@@ -2,6 +2,7 @@ mod attachments;
 mod cloud;
 mod commands;
 mod export;
+mod import;
 mod logging;
 #[cfg(target_os = "macos")]
 mod menu;
@@ -122,6 +123,7 @@ pub fn run() {
             cloud::open_drive_notebook,
             cloud::forget_drive_notebook,
             export::export_notebook,
+            import::import_evernote,
             export::show_export,
             logging::app_info,
             logging::show_logs,

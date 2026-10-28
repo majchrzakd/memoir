@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type CloudStatus, type Exported } from './api'
+  import { api, type CloudStatus, type Exported, type Imported } from './api'
   import { app, errorMessage } from './app.svelte'
   import { localDate, sinceTime } from './time'
   import SecuritySettings from './SecuritySettings.svelte'
@@ -62,6 +62,31 @@
       checkResult = `Couldn't check for updates: ${errorMessage(e)}`
     } finally {
       checking = false
+    }
+  }
+
+  let importing = $state(false)
+  let importProgress = $state(0)
+  let imported = $state<Imported | null>(null)
+  let importError = $state<string | null>(null)
+
+  async function importEvernote() {
+    importError = null
+    imported = null
+    importProgress = 0
+    importing = true
+    const stop = await api.onImportProgress((p) => (importProgress = p.notes))
+    try {
+      const result = await api.importEvernote()
+      if (result) imported = result
+    } catch (e) {
+      importError = errorMessage(e)
+    } finally {
+      importing = false
+      stop()
+      // Imported notes appear in the tree (also after a partial failure).
+      await app.refreshTree().catch(() => {})
+      app.laterChanged()
     }
   }
 
@@ -176,6 +201,43 @@
   </article>
 
   <SecuritySettings />
+
+  <article class="card">
+    <header>
+      <h2>Import</h2>
+    </header>
+    <p>
+      Bring your notes over from Evernote. In Evernote, export each notebook as an
+      <strong>ENEX</strong> file (right-click the notebook → Export notebook…). Each file becomes a folder
+      here; notes keep their dates, tags, checklists, tables, images and attachments.
+    </p>
+    {#if importing}
+      <p class="muted">Importing… {plural(importProgress, 'note')} so far.</p>
+    {:else if imported}
+      {@const s = imported.summary}
+      <p>
+        Imported {plural(s.notes, 'note')} with {plural(s.attachments, 'attachment')} into
+        {imported.folders.map((f) => `“${f}”`).join(', ')}.
+      </p>
+      {#if s.encrypted_sections || s.skipped_attachments}
+        <p class="muted">
+          {#if s.encrypted_sections}
+            {plural(s.encrypted_sections, 'encrypted section')} couldn't be imported (Evernote's own encryption).
+          {/if}
+          {#if s.skipped_attachments}
+            {plural(s.skipped_attachments, 'attachment')} over 100 MB were left out.
+          {/if}
+          The notes say where.
+        </p>
+      {/if}
+    {/if}
+    <div class="actions">
+      <button class="primary" disabled={importing} onclick={importEvernote}>
+        {importing ? 'Importing…' : 'Import from Evernote…'}
+      </button>
+    </div>
+    {#if importError}<p class="error">{importError}</p>{/if}
+  </article>
 
   <article class="card">
     <header>

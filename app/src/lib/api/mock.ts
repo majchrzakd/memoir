@@ -12,6 +12,7 @@ import {
   type Api,
   type CloudStatus,
   type HistoryEntry,
+  type ImportProgress,
   type SyncStatus,
   type Id,
   type Kind,
@@ -50,6 +51,7 @@ export function createMockApi(): Api {
     ? { version: '0.2.0', notes: 'Faster sync and a new icon.' }
     : null
   const syncListeners = new Set<(s: SyncStatus) => void>()
+  const importListeners = new Set<(p: ImportProgress) => void>()
   const syncStatus = (): SyncStatus => ({
     state: cloud.connected ? 'idle' : 'off',
     pending: 0,
@@ -501,6 +503,22 @@ export function createMockApi(): Api {
       }
     },
     async showExport() {},
+    async importEvernote() {
+      const folder = create('folder', { parent: null, position: { type: 'last' } }, 'Recipes')
+      for (let i = 1; i <= 3; i++) {
+        await new Promise((r) => setTimeout(r, 400))
+        create('note', { parent: folder, position: { type: 'last' } }, `Imported recipe ${i}`)
+        importListeners.forEach((l) => l({ file: 'Recipes', notes: i }))
+      }
+      return {
+        folders: ['Recipes'],
+        summary: { notes: 3, attachments: 2, skipped_attachments: 0, encrypted_sections: 1 },
+      }
+    },
+    async onImportProgress(handler) {
+      importListeners.add(handler)
+      return () => importListeners.delete(handler)
+    },
 
     async appInfo() {
       return {

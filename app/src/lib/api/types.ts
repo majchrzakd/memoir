@@ -173,6 +173,12 @@ export interface Api {
   exportNotebook(name: string): Promise<Exported | null>
   /** Opens the file manager at an export. */
   showExport(path: string): Promise<void>
+  /**
+   * Asks for Evernote export files (.enex) and imports each into a new folder
+   * named after it. Null if cancelled.
+   */
+  importEvernote(): Promise<Imported | null>
+  onImportProgress(handler: (progress: ImportProgress) => void): Promise<() => void>
 
   /** App version and where its logs are. */
   appInfo(): Promise<{ version: string; log_dir: string }>
@@ -196,6 +202,27 @@ export interface Api {
 
   /** Items chosen in the macOS menu bar. */
   onMenuCommand(handler: (command: MenuCommand) => void): Promise<() => void>
+}
+
+export interface ImportSummary {
+  notes: number
+  attachments: number
+  /** Over the size limit; left out with a marker in the note. */
+  skipped_attachments: number
+  /** Encrypted text that couldn't be imported; marked in the note. */
+  encrypted_sections: number
+}
+
+export interface Imported {
+  /** One folder per file. */
+  folders: string[]
+  summary: ImportSummary
+}
+
+export interface ImportProgress {
+  file: string
+  /** Notes imported so far, over all files. */
+  notes: number
 }
 
 export interface Exported {
