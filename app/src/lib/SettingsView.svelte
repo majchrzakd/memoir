@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type CloudStatus, type Exported, type Imported } from './api'
   import { app, errorMessage } from './app.svelte'
+  import { isIOS } from './platform'
   import { localDate, sinceTime } from './time'
   import SecuritySettings from './SecuritySettings.svelte'
   import Icon from './ui/Icon.svelte'
@@ -202,77 +203,80 @@
 
   <SecuritySettings />
 
-  <article class="card">
-    <header>
-      <h2>Import</h2>
-    </header>
-    <p>
-      Bring your notes over from Evernote. In Evernote, export each notebook as an
-      <strong>ENEX</strong> file (right-click the notebook → Export notebook…). Each file becomes a folder
-      here; notes keep their dates, tags, checklists, tables, images and attachments.
-    </p>
-    {#if importing}
-      <p class="muted">Importing… {plural(importProgress, 'note')} so far.</p>
-    {:else if imported}
-      {@const s = imported.summary}
+  {#if !isIOS}
+    <article class="card">
+      <header>
+        <h2>Import</h2>
+      </header>
       <p>
-        Imported {plural(s.notes, 'note')} with {plural(s.attachments, 'attachment')} into
-        {imported.folders.map((f) => `“${f}”`).join(', ')}.
+        Bring your notes over from Evernote. In Evernote, export each notebook as an
+        <strong>ENEX</strong> file (right-click the notebook → Export notebook…). Each file becomes a
+        folder here; notes keep their dates, tags, checklists, tables, images and attachments.
       </p>
-      {#if s.encrypted_sections || s.skipped_attachments}
-        <p class="muted">
-          {#if s.encrypted_sections}
-            {plural(s.encrypted_sections, 'encrypted section')} couldn't be imported (Evernote's own encryption).
-          {/if}
-          {#if s.skipped_attachments}
-            {plural(s.skipped_attachments, 'attachment')} over 100 MB were left out.
-          {/if}
-          The notes say where.
+      {#if importing}
+        <p class="muted">Importing… {plural(importProgress, 'note')} so far.</p>
+      {:else if imported}
+        {@const s = imported.summary}
+        <p>
+          Imported {plural(s.notes, 'note')} with {plural(s.attachments, 'attachment')} into
+          {imported.folders.map((f) => `“${f}”`).join(', ')}.
         </p>
+        {#if s.encrypted_sections || s.skipped_attachments}
+          <p class="muted">
+            {#if s.encrypted_sections}
+              {plural(s.encrypted_sections, 'encrypted section')} couldn't be imported (Evernote's own
+              encryption).
+            {/if}
+            {#if s.skipped_attachments}
+              {plural(s.skipped_attachments, 'attachment')} over 100 MB were left out.
+            {/if}
+            The notes say where.
+          </p>
+        {/if}
       {/if}
-    {/if}
-    <div class="actions">
-      <button class="primary" disabled={importing} onclick={importEvernote}>
-        {importing ? 'Importing…' : 'Import from Evernote…'}
-      </button>
-    </div>
-    {#if importError}<p class="error">{importError}</p>{/if}
-  </article>
+      <div class="actions">
+        <button class="primary" disabled={importing} onclick={importEvernote}>
+          {importing ? 'Importing…' : 'Import from Evernote…'}
+        </button>
+      </div>
+      {#if importError}<p class="error">{importError}</p>{/if}
+    </article>
 
-  <article class="card">
-    <header>
-      <h2>Export</h2>
-    </header>
-    <p>
-      Save the whole notebook as Markdown files that any editor can open: a folder per folder, a
-      file per note (with its replies), attachments and the trash.
-    </p>
-    <p class="muted">
-      The export is not encrypted. Keep it somewhere safe, or delete it when you're done.
-    </p>
-    {#if exported}
-      {@const s = exported.summary}
+    <article class="card">
+      <header>
+        <h2>Export</h2>
+      </header>
       <p>
-        Exported {plural(s.notes, 'note')}, {plural(s.folders, 'folder')} and
-        {plural(s.attachments, 'attachment')} to <code>{exported.path}</code>.
+        Save the whole notebook as Markdown files that any editor can open: a folder per folder, a
+        file per note (with its replies), attachments and the trash.
       </p>
-      {#if s.missing_attachments}
-        <p class="muted">
-          {plural(s.missing_attachments, 'attachment')} weren't on this device yet, so their links point
-          nowhere in the export.
-        </p>
-      {/if}
-    {/if}
-    <div class="actions">
-      <button class="primary" disabled={exporting} onclick={exportNotebook}>
-        {exporting ? 'Exporting…' : 'Export to Markdown…'}
-      </button>
+      <p class="muted">
+        The export is not encrypted. Keep it somewhere safe, or delete it when you're done.
+      </p>
       {#if exported}
-        <button onclick={() => exported && api.showExport(exported.path)}>Show in folder</button>
+        {@const s = exported.summary}
+        <p>
+          Exported {plural(s.notes, 'note')}, {plural(s.folders, 'folder')} and
+          {plural(s.attachments, 'attachment')} to <code>{exported.path}</code>.
+        </p>
+        {#if s.missing_attachments}
+          <p class="muted">
+            {plural(s.missing_attachments, 'attachment')} weren't on this device yet, so their links point
+            nowhere in the export.
+          </p>
+        {/if}
       {/if}
-    </div>
-    {#if exportError}<p class="error">{exportError}</p>{/if}
-  </article>
+      <div class="actions">
+        <button class="primary" disabled={exporting} onclick={exportNotebook}>
+          {exporting ? 'Exporting…' : 'Export to Markdown…'}
+        </button>
+        {#if exported}
+          <button onclick={() => exported && api.showExport(exported.path)}>Show in folder</button>
+        {/if}
+      </div>
+      {#if exportError}<p class="error">{exportError}</p>{/if}
+    </article>
+  {/if}
 
   <article class="card">
     <header>
@@ -283,23 +287,27 @@
       If something goes wrong, the log helps find out why. It records what Memoir did (like sync
       rounds and errors), never the content of your notes.
     </p>
-    {#if app.update}
+    {#if isIOS}
+      <!-- Updates come from the App Store or TestFlight; no folders to open. -->
+    {:else if app.update}
       <p>Memoir {app.update.version} is available.</p>
     {:else if checkResult}
       <p class="muted">{checkResult}</p>
     {/if}
-    <div class="actions">
-      {#if app.update}
-        <button class="primary" onclick={() => app.installUpdate().catch((e) => app.fail(e))}>
-          Restart to update
-        </button>
-      {:else}
-        <button disabled={checking} onclick={checkForUpdate}>
-          {checking ? 'Checking…' : 'Check for updates'}
-        </button>
-      {/if}
-      <button onclick={() => api.showLogs().catch((e) => app.fail(e))}>Open log folder</button>
-    </div>
+    {#if !isIOS}
+      <div class="actions">
+        {#if app.update}
+          <button class="primary" onclick={() => app.installUpdate().catch((e) => app.fail(e))}>
+            Restart to update
+          </button>
+        {:else}
+          <button disabled={checking} onclick={checkForUpdate}>
+            {checking ? 'Checking…' : 'Check for updates'}
+          </button>
+        {/if}
+        <button onclick={() => api.showLogs().catch((e) => app.fail(e))}>Open log folder</button>
+      </div>
+    {/if}
   </article>
 </section>
 
@@ -308,6 +316,12 @@
     height: 100%;
     overflow-y: auto;
     padding: 28px max(40px, calc((100% - 760px) / 2));
+  }
+
+  @media (max-width: 700px) {
+    .settings {
+      padding: 16px;
+    }
   }
 
   h1 {

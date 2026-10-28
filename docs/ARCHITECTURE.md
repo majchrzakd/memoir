@@ -616,3 +616,45 @@ Same code; the differences are in the Tauri shell.
 - **Bundle:** `.app` and `.dmg` (`tauri.macos.conf.json`), macOS 11+,
   universal (Apple silicon and Intel) in the Release workflow. Signed ad hoc
   until there is a Developer ID; see docs/RELEASE.md.
+
+## 14. iOS (M10, in progress)
+
+Tauri's iOS build of the same app; the Xcode project is generated into
+`app/src-tauri/gen/apple` (`tauri ios init`) and checked in.
+
+- **Keychain:** `keyring`'s ready-made setup stops short of iOS (and its
+  macOS Keychain store doesn't build there), so on iOS `keystore.rs` uses
+  `keyring-core` with the iOS Keychain store
+  (`apple-native-keyring-store`, "protected data", the app's own access
+  group) directly. Same service and accounts as on the desktop.
+- **Data** in the app's sandbox (`Library/Application Support/com.memoir.notebook`).
+- **Not on iOS:** the updater (the App Store or TestFlight updates the app),
+  the menu bar and window close/quit handling, and Export to Markdown and
+  Import from Evernote for now (no folder picker, and `.enex` has no file
+  type the iOS picker knows; both will go through the Files app).
+- **Phone layout** (`app/src/lib/platform.ts`: `phone` = window ≤ 700 px,
+  `touch` = coarse pointer): one pane at a time — the list, or the note /
+  trash / settings with a "‹ Notes" back button (`app.listShown`, both panes
+  stay mounted so the editor keeps its state); 44 px tree rows with a ⋯
+  button for the row menu (no right-click on touch); a one-row scrolling
+  toolbar; no keyboard hints; safe-area padding (`viewport-fit=cover`);
+  16 px text on touch screens, which also stops iOS zooming into focused
+  fields. A narrow desktop window gets the same one-pane layout. With no
+  drag & drop on touch, the row menu's "Move to…" picks a folder
+  (`sidebar/MoveDialog.svelte`, `moveTargets` in `tree.ts`); it moves to the
+  end of that folder, and works on the desktop too.
+- **Leaving the app** (`visibilitychange`): the editor is saved and a sync
+  starts; coming back pulls. iOS may suspend the app a few seconds later,
+  and anything not pushed by then goes up on the next sync. Timers stop
+  while the app is suspended, so coming back checks auto-lock first; locking
+  returns a phone to the list.
+- **Google sign-in:** the desktop's loopback redirect isn't possible on
+  iOS. The iOS app uses its own OAuth client (type iOS, no secret,
+  `IOS_CLIENT_ID` in `cloud.rs`); Google redirects to the reversed client ID
+  as a URL scheme (`Info.ios.plist`), iOS opens Memoir with that URL
+  (`RunEvent::Opened`), and `oauth::sign_in_with_app_redirect` checks the
+  `state` and exchanges the code (PKCE, no client secret). Same project as
+  the desktop client, so both see the same Drive files. The refresh token is
+  per device, in the iOS Keychain.
+- **Still to do:** a background task so a push can finish after leaving the app,
+  share sheet for attachments and export.

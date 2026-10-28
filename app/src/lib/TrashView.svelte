@@ -88,6 +88,12 @@
     padding: 28px max(40px, calc((100% - 760px) / 2));
   }
 
+  @media (max-width: 700px) {
+    .trash {
+      padding: 16px;
+    }
+  }
+
   header {
     display: flex;
     align-items: center;

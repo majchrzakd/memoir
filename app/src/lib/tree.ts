@@ -64,6 +64,36 @@ export function folderPath(byId: ReadonlyMap<Id, TreeItem>, id: Id): string {
     .join(' / ')
 }
 
+/** A folder (or the top level, id null) offered by "Move to…". */
+export interface MoveTarget {
+  id: Id | null
+  title: string
+  depth: number
+  /** Where the item is now. */
+  current: boolean
+}
+
+/**
+ * Where `id` can be moved: the top level, then every folder in tree order. A
+ * folder can't go into itself or anything inside it.
+ */
+export function moveTargets(items: readonly TreeItem[], id: Id): MoveTarget[] {
+  const children = childrenMap(items)
+  const parent = items.find((i) => i.id === id)?.parent_id ?? null
+  const targets: MoveTarget[] = [
+    { id: null, title: 'Top level', depth: 0, current: parent === null },
+  ]
+  const visit = (folder: Id | null, depth: number) => {
+    for (const item of children.get(folder) ?? []) {
+      if (item.kind !== 'folder' || item.id === id) continue
+      targets.push({ id: item.id, title: displayTitle(item), depth, current: item.id === parent })
+      visit(item.id, depth + 1)
+    }
+  }
+  visit(null, 1)
+  return targets
+}
+
 export type DropZone = 'before' | 'inside' | 'after'
 
 /**

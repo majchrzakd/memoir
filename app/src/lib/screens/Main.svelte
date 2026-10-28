@@ -3,11 +3,13 @@
   import { api, type MenuCommand } from '../api'
   import { app } from '../app.svelte'
   import Editor from '../editor/Editor.svelte'
-  import { keys } from '../platform'
+  import { keys, phone, touch } from '../platform'
   import SearchPalette from '../SearchPalette.svelte'
+  import MoveDialog from '../sidebar/MoveDialog.svelte'
   import Sidebar from '../sidebar/Sidebar.svelte'
   import SettingsView from '../SettingsView.svelte'
   import TrashView from '../TrashView.svelte'
+  import Icon from '../ui/Icon.svelte'
 
   const WIDTH_KEY = 'memoir.sidebarWidth'
   const MIN_WIDTH = 200
@@ -57,7 +59,7 @@
         void app.lock()
         break
       case 'settings':
-        app.view = 'settings'
+        app.show('settings')
         break
       default: {
         // Every command is handled (compile error otherwise).
@@ -104,7 +106,14 @@
 
 <svelte:window {onkeydown} />
 
-<div class="layout" class:resizing style:grid-template-columns="{width}px 0 1fr">
+<!-- On a phone one pane shows at a time; both stay mounted so the editor keeps its state. -->
+<div
+  class="layout"
+  class:resizing
+  class:phone={phone.current}
+  class:list-shown={app.listShown}
+  style:grid-template-columns={phone.current ? null : `${width}px 0 1fr`}
+>
   <Sidebar />
   <div
     class="splitter"
@@ -116,22 +125,36 @@
     onpointerup={endResize}
   ></div>
   <main class="content">
-    {#if app.view === 'trash'}
-      <TrashView />
-    {:else if app.view === 'settings'}
-      <SettingsView />
-    {:else if app.openNoteId}
-      <Editor noteId={app.openNoteId} />
-    {:else}
-      <div class="empty muted">
-        <p>Select a note, or press <kbd>{keys('Ctrl+N')}</kbd> to create one.</p>
+    {#if phone.current}
+      <div class="phone-bar">
+        <button class="back" onclick={() => app.back()}>
+          <Icon name="chevron" size={16} />Notes
+        </button>
       </div>
     {/if}
+    <div class="pane">
+      {#if app.view === 'trash'}
+        <TrashView />
+      {:else if app.view === 'settings'}
+        <SettingsView />
+      {:else if app.openNoteId}
+        <Editor noteId={app.openNoteId} />
+      {:else if touch.current}
+        <div class="empty muted"><p>Select a note, or tap the new-note button.</p></div>
+      {:else}
+        <div class="empty muted">
+          <p>Select a note, or press <kbd>{keys('Ctrl+N')}</kbd> to create one.</p>
+        </div>
+      {/if}
+    </div>
   </main>
 </div>
 
 {#if app.searchOpen}
   <SearchPalette />
+{/if}
+{#if app.movingId}
+  <MoveDialog id={app.movingId} />
 {/if}
 
 <style>
@@ -140,6 +163,46 @@
     /* One row exactly the window's height; panes scroll inside it. */
     grid-template-rows: minmax(0, 1fr);
     height: 100vh;
+    height: 100dvh;
+    /* iPhone notch and home indicator (zero elsewhere). */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+      env(safe-area-inset-left);
+  }
+
+  .layout.phone {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The strips behind the status bar and home indicator match the list. */
+  .layout.phone.list-shown {
+    background: var(--bg-sidebar);
+  }
+
+  .layout.phone > .splitter,
+  .layout.phone.list-shown > .content,
+  .layout.phone:not(.list-shown) > :global(.sidebar) {
+    display: none;
+  }
+
+  .phone-bar {
+    flex: none;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .back {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    min-height: 44px;
+    padding: 0 8px 0 2px;
+    border: none;
+    background: none;
+    color: var(--accent);
+  }
+
+  .back :global(svg) {
+    transform: rotate(180deg);
   }
 
   .layout.resizing {
@@ -162,9 +225,16 @@
   }
 
   .content {
-    position: relative;
+    display: flex;
+    flex-direction: column;
     min-width: 0;
     overflow: hidden;
+  }
+
+  .pane {
+    position: relative;
+    flex: 1;
+    min-height: 0;
   }
 
   .empty {

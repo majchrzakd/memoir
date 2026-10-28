@@ -1,4 +1,4 @@
-//! Device-local secret storage: Windows Credential Manager, macOS Keychain.
+//! Device-local secret storage: Windows Credential Manager, macOS and iOS Keychain.
 //!
 //! Used to remember the local database key on a trusted device, so the app
 //! opens without asking for the passphrase. Turning on "require passphrase on
@@ -7,6 +7,10 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+#[cfg(not(target_os = "ios"))]
+use keyring::{Entry, Error};
+#[cfg(target_os = "ios")]
+use keyring_core::{Entry, Error};
 use zeroize::Zeroizing;
 
 use crate::crypto::SecretKey;
@@ -77,16 +81,35 @@ impl OsKeychain {
         }
     }
 
-    fn entry(&self, account: &str) -> Result<keyring::Entry, KeystoreError> {
-        keyring::Entry::new(&self.service, account).map_err(os_error)
+    fn entry(&self, account: &str) -> Result<Entry, KeystoreError> {
+        #[cfg(target_os = "ios")]
+        ios_store()?;
+        Entry::new(&self.service, account).map_err(os_error)
     }
+}
+
+/// Makes the iOS Keychain ("protected data" store, this app's own access
+/// group) the store entries are created in. Once; later calls return the
+/// first result.
+#[cfg(target_os = "ios")]
+fn ios_store() -> Result<(), KeystoreError> {
+    static STORE: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    STORE
+        .get_or_init(|| {
+            let store =
+                apple_native_keyring_store::protected::Store::new().map_err(|e| e.to_string())?;
+            keyring_core::set_default_store(store);
+            Ok(())
+        })
+        .clone()
+        .map_err(KeystoreError::Os)
 }
 
 impl SecretStore for OsKeychain {
     fn load_bytes(&self, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, KeystoreError> {
         match self.entry(account)?.get_secret() {
             Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(Error::NoEntry) => Ok(None),
             Err(e) => Err(os_error(e)),
         }
     }
@@ -97,13 +120,13 @@ impl SecretStore for OsKeychain {
 
     fn remove(&self, account: &str) -> Result<(), KeystoreError> {
         match self.entry(account)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Ok(()) | Err(Error::NoEntry) => Ok(()),
             Err(e) => Err(os_error(e)),
         }
     }
 }
 
-fn os_error(e: keyring::Error) -> KeystoreError {
+fn os_error(e: Error) -> KeystoreError {
     KeystoreError::Os(e.to_string())
 }
 

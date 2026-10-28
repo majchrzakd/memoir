@@ -1,13 +1,14 @@
 <script lang="ts">
   import type { Id, Placement } from '../api'
   import { app } from '../app.svelte'
-  import { keys } from '../platform'
+  import { keys, touch } from '../platform'
   import { fullTime, shortTime } from '../time'
   import { displayTitle, dropTarget, type DropZone, type Row } from '../tree'
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte'
   import Icon from '../ui/Icon.svelte'
 
-  const ROW_HEIGHT = 28
+  /** Rows are virtualized, so their height is fixed (taller for fingers). */
+  const rowHeight = $derived(touch.current ? 44 : 28)
   const OVERSCAN = 10
   const EXPAND_ON_HOVER_MS = 700
 
@@ -16,9 +17,9 @@
   let viewportHeight = $state(0)
 
   // Only rows near the visible area are rendered, so large trees stay fast.
-  const first = $derived(Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN))
+  const first = $derived(Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN))
   const last = $derived(
-    Math.min(app.rows.length, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN),
+    Math.min(app.rows.length, Math.ceil((scrollTop + viewportHeight) / rowHeight) + OVERSCAN),
   )
   const visible = $derived(app.rows.slice(first, last))
   const selectedIndex = $derived(app.rows.findIndex((r) => r.item.id === app.selectedId))
@@ -32,10 +33,10 @@
   // Keep the selected row in view.
   $effect(() => {
     if (!viewport || selectedIndex < 0) return
-    const top = selectedIndex * ROW_HEIGHT
+    const top = selectedIndex * rowHeight
     if (top < viewport.scrollTop) viewport.scrollTop = top
-    else if (top + ROW_HEIGHT > viewport.scrollTop + viewport.clientHeight)
-      viewport.scrollTop = top + ROW_HEIGHT - viewport.clientHeight
+    else if (top + rowHeight > viewport.scrollTop + viewport.clientHeight)
+      viewport.scrollTop = top + rowHeight - viewport.clientHeight
   })
 
   // Start renaming with the current title.
@@ -108,13 +109,16 @@
         if (row) void app.trash(row.item.id)
         break
       case 'ContextMenu':
-        if (row) openMenu(row, 24 + row.depth * 16, (selectedIndex + 1) * ROW_HEIGHT - scrollTop)
+        if (row) openMenu(row, 24 + row.depth * 16, (selectedIndex + 1) * rowHeight - scrollTop)
         break
       default:
         return
     }
     e.preventDefault()
   }
+
+  /** A shortcut to show in the menu; none on touch screens. */
+  const hint = (shortcut: string) => (touch.current ? undefined : shortcut)
 
   function openMenu(row: Row | null, x: number, y: number) {
     const rect = viewport?.getBoundingClientRect()
@@ -123,8 +127,12 @@
     let items: MenuItem[]
     if (!item) {
       items = [
-        { label: 'New note', shortcut: keys('Ctrl+N'), action: () => app.newNote(null) },
-        { label: 'New folder', shortcut: keys('Ctrl+Shift+N'), action: () => app.newFolder(null) },
+        { label: 'New note', shortcut: hint(keys('Ctrl+N')), action: () => app.newNote(null) },
+        {
+          label: 'New folder',
+          shortcut: hint(keys('Ctrl+Shift+N')),
+          action: () => app.newFolder(null),
+        },
       ]
     } else {
       app.selectedId = item.id
@@ -135,8 +143,14 @@
               { label: 'New folder here', action: () => app.newFolder(item.id) },
             ]
           : [{ label: 'Open', action: () => app.openNote(item.id) }]),
-        { label: 'Rename', shortcut: 'F2', action: () => (app.renamingId = item.id) },
-        { label: 'Move to trash', shortcut: 'Del', danger: true, action: () => app.trash(item.id) },
+        { label: 'Rename', shortcut: hint('F2'), action: () => (app.renamingId = item.id) },
+        { label: 'Move to…', action: () => (app.movingId = item.id) },
+        {
+          label: 'Move to trash',
+          shortcut: hint('Del'),
+          danger: true,
+          action: () => app.trash(item.id),
+        },
       ]
     }
     menu = { ...at, items }
@@ -196,6 +210,7 @@
   aria-label="Notebook"
   tabindex="0"
   aria-activedescendant={app.selectedId ? `row-${app.selectedId}` : undefined}
+  style:--row-height="{rowHeight}px"
   bind:this={viewport}
   bind:clientHeight={viewportHeight}
   onscroll={() => (scrollTop = viewport?.scrollTop ?? 0)}
@@ -208,8 +223,8 @@
   ondragover={ondragoverEmpty}
   {ondrop}
 >
-  <div class="spacer" style:height="{app.rows.length * ROW_HEIGHT}px">
-    <div class="window" style:transform="translateY({first * ROW_HEIGHT}px)">
+  <div class="spacer" style:height="{app.rows.length * rowHeight}px">
+    <div class="window" style:transform="translateY({first * rowHeight}px)">
       {#each visible as row (row.item.id)}
         {@const item = row.item}
         <!-- Keyboard interaction is handled by the tree container (roving selection). -->
@@ -228,7 +243,7 @@
           aria-selected={item.id === app.selectedId}
           aria-expanded={item.kind === 'folder' ? row.expanded : undefined}
           tabindex="-1"
-          draggable={app.renamingId !== item.id}
+          draggable={!touch.current && app.renamingId !== item.id}
           onclick={() => select(row)}
           oncontextmenu={(e) => {
             e.preventDefault()
@@ -294,13 +309,33 @@
                 {shortTime(item.updated_at)}
               </span>
             {/if}
+            <!-- Touch screens have no right-click: the row's menu is here. -->
+            {#if touch.current}
+              <button
+                class="more"
+                tabindex="-1"
+                aria-label="More"
+                onclick={(e) => {
+                  e.stopPropagation()
+                  const at = e.currentTarget.getBoundingClientRect()
+                  const rect = viewport!.getBoundingClientRect()
+                  openMenu(row, at.left - rect.left, at.bottom - rect.top)
+                }}
+              >
+                <Icon name="more" size={20} />
+              </button>
+            {/if}
           {/if}
         </div>
       {/each}
     </div>
   </div>
   {#if app.rows.length === 0}
-    <p class="no-notes muted">No notes yet. Press {keys('Ctrl+N')} to create one.</p>
+    <p class="no-notes muted">
+      No notes yet. {touch.current
+        ? 'Tap the new-note button to create one.'
+        : `Press ${keys('Ctrl+N')} to create one.`}
+    </p>
   {/if}
 </div>
 
@@ -336,7 +371,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    height: 28px;
+    height: var(--row-height);
     margin: 0 6px;
     padding-right: 8px;
     border-radius: 6px;
@@ -452,6 +487,20 @@
   .rename {
     height: 22px;
     padding: 0 6px !important;
+  }
+
+  .more {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    margin-right: -6px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--text-muted);
   }
 
   .no-notes {

@@ -4,7 +4,8 @@
 //!
 //! The OAuth client (from Google Cloud Console, see docs/spikes/google-oauth.md)
 //! is taken from `MEMOIR_GOOGLE_CLIENT_ID` / `MEMOIR_GOOGLE_CLIENT_SECRET`,
-//! at build time or (for development) at run time.
+//! at build time or (for development) at run time. iOS uses its own client
+//! (`IOS_CLIENT_ID`), which comes back to the app through its URL scheme.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -22,6 +23,13 @@ use zeroize::Zeroizing;
 use crate::commands::AppState;
 
 const VAULT_FILE: &str = "vault.json";
+
+/// The Google OAuth client for iOS (type "iOS", bundle ID
+/// `com.memoir.notebook`). Not a secret: it ships in every copy of the app,
+/// and its reversed form is the URL scheme registered in `Info.ios.plist`.
+#[cfg(target_os = "ios")]
+const IOS_CLIENT_ID: &str =
+    "562411400187-f7ifiiin7d0uqqdcpqih6fie7o96lps1.apps.googleusercontent.com";
 const PROVIDER: &str = "gdrive";
 
 /// Keys in the store's `remote_state`.
@@ -38,6 +46,14 @@ pub struct Cloud {
     connecting: AtomicBool,
     /// Signed in on a new device, notebook found, waiting for the passphrase.
     joining: Mutex<Option<Joining>>,
+    /// iOS: where to pass the URLs Google's sign-in redirects back to, while a
+    /// sign-in is waiting.
+    #[cfg(target_os = "ios")]
+    redirect: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
+    /// iOS: a sign-in came back with nothing waiting for it (iOS restarted
+    /// the app while the user was in Safari, or it was cancelled).
+    #[cfg(target_os = "ios")]
+    redirect_lost: AtomicBool,
 }
 
 /// A Google sign-in with the Memoir folder set up.
@@ -54,6 +70,33 @@ struct Joining {
 }
 
 impl Cloud {
+    /// iOS opened the app with `url`: the end of a Google sign-in (other URLs
+    /// are ignored).
+    #[cfg(target_os = "ios")]
+    pub fn opened(&self, url: &str) {
+        if !url.starts_with(&oauth::app_redirect_uri(IOS_CLIENT_ID)) {
+            return;
+        }
+        match &*self.redirect.lock().expect("lock") {
+            Some(waiting) => {
+                let _ = waiting.send(url.to_owned());
+            }
+            None => self.redirect_lost.store(true, Ordering::SeqCst),
+        }
+    }
+
+    /// Something to tell the user about the last sign-in, if any.
+    fn sign_in_problem(&self) -> Option<String> {
+        #[cfg(target_os = "ios")]
+        if self.redirect_lost.load(Ordering::SeqCst) {
+            return Some(
+                "Google sign-in finished after Memoir stopped waiting for it. Connect again."
+                    .into(),
+            );
+        }
+        None
+    }
+
     /// The connected provider, if any.
     pub fn provider(&self) -> Option<Arc<DriveProvider>> {
         self.provider.read().expect("lock").clone()
@@ -75,6 +118,12 @@ pub struct CloudStatus {
     pub problem: Option<String>,
 }
 
+#[cfg(target_os = "ios")]
+fn oauth_config() -> Option<OAuthConfig> {
+    Some(OAuthConfig::google(IOS_CLIENT_ID, ""))
+}
+
+#[cfg(not(target_os = "ios"))]
 fn oauth_config() -> Option<OAuthConfig> {
     let id = option_env!("MEMOIR_GOOGLE_CLIENT_ID")
         .map(str::to_owned)
@@ -117,10 +166,12 @@ fn status(state: &AppState, problem: Option<String>) -> CloudStatus {
         connected,
         connecting: state.cloud.connecting.load(Ordering::SeqCst),
         account,
-        problem: problem.or_else(|| {
-            (saved && !connected)
-                .then(|| "The Google sign-in is missing on this device. Connect again.".into())
-        }),
+        problem: problem
+            .or_else(|| (!connected).then(|| state.cloud.sign_in_problem())?)
+            .or_else(|| {
+                (saved && !connected)
+                    .then(|| "The Google sign-in is missing on this device. Connect again.".into())
+            }),
     }
 }
 
@@ -203,18 +254,31 @@ async fn sign_in<R: Runtime>(
     config: OAuthConfig,
 ) -> Result<SignedIn, String> {
     let http = reqwest::Client::new();
-    let sign_in = oauth::sign_in(
-        &config,
-        &http,
-        |url| {
-            app.opener()
-                .open_url(url, None::<&str>)
-                .map_err(|e| e.to_string())
-        },
-        state.cloud.cancel.notified(),
-    )
-    .await
-    .map_err(|e| match e {
+    let open_browser = |url: &str| {
+        app.opener()
+            .open_url(url, None::<&str>)
+            .map_err(|e| e.to_string())
+    };
+    #[cfg(not(target_os = "ios"))]
+    let sign_in = oauth::sign_in(&config, &http, open_browser, state.cloud.cancel.notified()).await;
+    #[cfg(target_os = "ios")]
+    let sign_in = {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        state.cloud.redirect_lost.store(false, Ordering::SeqCst);
+        *state.cloud.redirect.lock().expect("lock") = Some(tx);
+        let sign_in = oauth::sign_in_with_app_redirect(
+            &config,
+            &http,
+            &oauth::app_redirect_uri(&config.client_id),
+            open_browser,
+            rx,
+            state.cloud.cancel.notified(),
+        )
+        .await;
+        *state.cloud.redirect.lock().expect("lock") = None;
+        sign_in
+    };
+    let sign_in = sign_in.map_err(|e| match e {
         OAuthError::Cancelled => "Connecting was cancelled.".to_string(),
         other => other.to_string(),
     })?;

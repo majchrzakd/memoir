@@ -12,6 +12,7 @@ import {
   type UpdateInfo,
 } from './api'
 import type { EditorOptions } from './editor/extensions'
+import { isIOS } from './platform'
 import { ancestorIds, childrenMap, visibleRows } from './tree'
 
 type Screen = 'loading' | Status
@@ -57,6 +58,10 @@ interface ConfirmRequest {
 class App {
   screen = $state<Screen>('loading')
   view = $state<View>('note')
+  /** Phone layout: the notes list is shown instead of the note, trash or settings. */
+  listShown = $state(true)
+  /** iOS, in the background: everything is hidden from the app switcher. */
+  covered = $state(false)
 
   items = $state.raw<TreeItem[]>([])
   expanded = new SvelteSet<Id>(load<Id[]>(EXPANDED_KEY, []))
@@ -90,6 +95,8 @@ class App {
   private lastActivity = Date.now()
 
   searchOpen = $state(false)
+  /** The item "Move to…" is choosing a folder for. */
+  movingId = $state<Id | null>(null)
   confirmRequest = $state<ConfirmRequest | null>(null)
   error = $state<string | null>(null)
 
@@ -130,6 +137,22 @@ class App {
     this.sync = await api.syncStatus()
     await api.onUpdateAvailable((update) => (this.update = update))
     this.update = await api.availableUpdate()
+    // iOS has no "closing": leaving the app is the moment to save and push
+    // (it may be suspended a few seconds later), and to cover the notes so
+    // the app switcher's snapshot doesn't show them. Coming back pulls, or
+    // locks instead if the auto-lock time passed while timers were suspended.
+    document.addEventListener('visibilitychange', () => {
+      this.covered = isIOS && document.hidden
+      if (this.screen !== 'unlocked') return
+      if (document.hidden) {
+        this.flushEditor().then(
+          () => this.syncNow(),
+          (e) => this.fail(e),
+        )
+      } else if (!this.checkIdle()) {
+        this.syncNow()
+      }
+    })
   }
 
   /** Other devices changed these notes or folders. */
@@ -165,9 +188,11 @@ class App {
     this.items = []
     this.replyDrafts.clear()
     this.searchOpen = false
+    this.movingId = null
     this.confirmRequest?.resolve(false)
     this.attachmentMenu = null
     this.view = 'note'
+    this.listShown = true
     this.screen = 'locked'
   }
 
@@ -182,12 +207,14 @@ class App {
     this.lastActivity = Date.now()
   }
 
-  /** Called every few seconds: locks once idle long enough. */
-  checkIdle(now = Date.now()) {
+  /** Called every few seconds: locks once idle long enough (and says so). */
+  checkIdle(now = Date.now()): boolean {
     const minutes = this.autoLockMinutes
     if (minutes > 0 && this.screen === 'unlocked' && now - this.lastActivity >= minutes * 60_000) {
       void this.lock()
+      return true
     }
+    return false
   }
 
   fail(e: unknown) {
@@ -222,7 +249,19 @@ class App {
 
   // ---- Actions -----------------------------------------------------------
 
+  /** Shows the trash or settings (on a phone, instead of the list). */
+  show(view: View) {
+    this.view = view
+    this.listShown = false
+  }
+
+  /** Phone layout: back to the notes list. */
+  back() {
+    this.listShown = true
+  }
+
   async openNote(id: Id) {
+    this.listShown = false
     if (id === this.openNoteId && this.view === 'note') return
     await this.flushEditor()
     this.view = 'note'
@@ -309,6 +348,13 @@ class App {
       await this.refreshTree()
       this.reveal(id)
     })
+  }
+
+  /** "Move to…": to the end of `parent` (null: the top level). */
+  async moveInto(id: Id, parent: Id | null) {
+    this.movingId = null
+    if (this.byId.get(id)?.parent_id === parent) return
+    await this.move(id, { parent, position: { type: 'last' } })
   }
 
   async trash(id: Id) {

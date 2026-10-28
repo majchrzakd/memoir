@@ -39,7 +39,7 @@
   })
 
   function onclick() {
-    if (app.sync.state === 'error') app.view = 'settings'
+    if (app.sync.state === 'error') app.show('settings')
     else app.syncNow()
   }
 </script>

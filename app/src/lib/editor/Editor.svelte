@@ -361,6 +361,12 @@
     padding: 28px 40px 120px;
   }
 
+  @media (max-width: 700px) {
+    .page {
+      padding: 16px 16px 120px;
+    }
+  }
+
   .title {
     width: 100%;
     padding: 0 0 6px;
