@@ -1,4 +1,5 @@
 import { app, SYNCED_EVENT } from '../app.svelte'
+import { isApple, keys, touch } from '../platform'
 import { attachmentId } from './attachments'
 import { linkedNoteId } from './noteLinks'
 
@@ -23,15 +24,17 @@ function attachmentAt(event: Event): { id: string; name: string } | null {
 /**
  * Svelte action for an editor's container: double-click opens an
  * attachment, right-click offers Open / Save as. A single click only places
- * the cursor (and never follows the link). A click on a link to another
- * note opens that note.
+ * the cursor (and never follows the link). A link to another note opens the
+ * same way, or with Ctrl/⌘-click; on touch screens with a tap (there's no
+ * keyboard to hold, and a double tap selects a word).
  */
 export function attachmentActions(node: HTMLElement) {
   const onclick = (e: MouseEvent) => {
     if (attachmentAt(e)) e.preventDefault()
     const note = noteLinkAt(e)
-    if (note && e.button === 0) {
-      e.preventDefault()
+    if (!note || e.button !== 0) return
+    e.preventDefault()
+    if (touch.current || (isApple ? e.metaKey : e.ctrlKey)) {
       e.stopPropagation()
       void app.openLinkedNote(note.id)
     }
@@ -43,11 +46,18 @@ export function attachmentActions(node: HTMLElement) {
     const target = app.byId.get(note.id)
     note.link.title =
       target?.kind === 'note'
-        ? `Open “${target.title || 'Untitled'}”`
+        ? `Double-click or ${keys('Ctrl')}-click to open “${target.title || 'Untitled'}”`
         : 'The linked note was deleted or is in the trash'
     note.link.classList.toggle('missing', target?.kind !== 'note')
   }
   const ondblclick = (e: MouseEvent) => {
+    const note = noteLinkAt(e)
+    if (note) {
+      e.preventDefault()
+      e.stopPropagation()
+      void app.openLinkedNote(note.id)
+      return
+    }
     const found = attachmentAt(e)
     if (!found) return
     e.preventDefault()

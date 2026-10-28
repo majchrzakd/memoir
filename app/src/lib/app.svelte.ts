@@ -237,6 +237,8 @@ class App {
     this.movingId = null
     this.confirmRequest?.resolve(false)
     this.attachmentMenu = null
+    this.linkingEditor = null
+    this.newWorkspaceOpen = false
     this.view = 'note'
     this.listShown = true
   }
@@ -250,9 +252,13 @@ class App {
     await this.openWorkspace(() => api.switchWorkspace(id))
   }
 
-  /** Adds a workspace and shows its first-run screen (new notebook or one from Drive). */
+  /**
+   * Adds a workspace and shows its first-run screen (new notebook or one from
+   * Drive). The "New workspace" dialog stays open if the open note can't be saved.
+   */
   async addWorkspace(name: string) {
     if (this.screen === 'loading' || !(await this.saved())) return
+    this.newWorkspaceOpen = false
     const previous = this.workspaces.active
     await this.openWorkspace(async () => {
       await api.addWorkspace(name)
@@ -396,7 +402,7 @@ class App {
     const item = this.byId.get(id)
     if (item?.kind === 'note') {
       this.sidebarTab = 'notes'
-      await this.openNote(id)
+      await this.openNote(id).catch((e) => this.fail(e))
     } else {
       this.fail(
         item ? 'That link points at a folder.' : 'The linked note was deleted or is in the trash.',

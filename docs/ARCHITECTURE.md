@@ -222,9 +222,10 @@ in its Markdown (`NOTE_LINK_SCHEME`), so links sync, merge and survive
 history like any other text, and keep working when the target is renamed
 or moved. In the editor, typing `[[` (or the toolbar's link button) opens a
 picker of note titles (`editor/NoteLinkDialog.svelte`); with text selected
-it links that text, otherwise it inserts the note's title. Clicking a note
-link opens the note; one to a deleted or trashed note says so (and is shown
-struck through). Below the text, **Linked from** lists the notes whose text
+it links that text, otherwise it inserts the note's title. A note link
+opens the note on double-click or Ctrl/⌘-click (a single click places the
+cursor, so the link's text can be edited) and on a tap on touch screens;
+one to a deleted or trashed note says so (and is shown struck through). Below the text, **Linked from** lists the notes whose text
 or thread links here (`Store::backlinks`: a scan of the note text, like
 search, with no index to keep in step with edits and sync; trashed notes
 are left out). Export turns note links into relative links to the `.md`

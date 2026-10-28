@@ -21,6 +21,7 @@ use tokio::sync::Notify;
 use zeroize::Zeroizing;
 
 use crate::commands::AppState;
+use crate::session::Session;
 use crate::workspaces::Workspaces;
 
 const VAULT_FILE: &str = "vault.json";
@@ -125,6 +126,8 @@ impl Cloud {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.cancel.notify_waiters();
         self.set(None);
+        #[cfg(target_os = "ios")]
+        self.redirect_lost.store(false, Ordering::SeqCst);
         if let Some(joining) = self.joining.lock().expect("lock").take() {
             joining.signed_in.revoke_later();
         }
@@ -174,6 +177,20 @@ fn oauth_config() -> Option<OAuthConfig> {
 
 /// Recreates the provider from saved state after the vault unlocks. No
 /// network access; problems surface on the next check or sync.
+/// Revokes a Google sign-in this device no longer keeps (a removed
+/// workspace's), in the background.
+pub fn revoke_token(token: Zeroizing<String>) {
+    let Some(config) = oauth_config() else {
+        return;
+    };
+    let provider = DriveProvider::new(DriveConfig::google(config), token);
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = provider.revoke().await {
+            log::warn!("could not revoke a removed workspace's Google token: {e}");
+        }
+    });
+}
+
 pub fn restore(state: &AppState) {
     let restored = (|| -> Option<DriveProvider> {
         let config = oauth_config()?;
@@ -261,6 +278,10 @@ async fn connect<R: Runtime>(
         .session()
         .and_then(|s| s.vault_file().map_err(|e| e.to_string()))?;
     let signed_in = sign_in(app, state, config).await?;
+    if !state.cloud.current(&signed_in) {
+        signed_in.revoke_later();
+        return Err(SWITCHED.into());
+    }
 
     // One notebook per Drive: refuse a Drive that holds a different one.
     match remote_vault(&signed_in.provider).await? {
@@ -431,24 +452,29 @@ fn remember(state: &AppState, signed_in: SignedIn) -> Result<(), String> {
             signed_in.revoke_later();
             return Err(SWITCHED.into());
         }
-        session
-            .set_cloud_token(&signed_in.refresh_token)
-            .map_err(|e| e.to_string())?;
-        let folders_json = serde_json::to_string(&signed_in.folders).expect("folders serialize");
-        session
-            .store()
-            .and_then(|s| {
-                s.set_remote_values(&[
-                    (key::PROVIDER, PROVIDER),
-                    (key::ACCOUNT, &signed_in.account),
-                    (key::FOLDERS, &folders_json),
-                ])
-                .map_err(Into::into)
-            })
-            .map_err(|e| e.to_string())?;
+        save_sign_in(&mut session, &signed_in)?;
     }
     state.cloud.set(Some(signed_in.provider));
     Ok(())
+}
+
+/// Keeps the sign-in with the (unlocked) notebook in `session`.
+fn save_sign_in(session: &mut Session, signed_in: &SignedIn) -> Result<(), String> {
+    session
+        .set_cloud_token(&signed_in.refresh_token)
+        .map_err(|e| e.to_string())?;
+    let folders_json = serde_json::to_string(&signed_in.folders).expect("folders serialize");
+    session
+        .store()
+        .and_then(|s| {
+            s.set_remote_values(&[
+                (key::PROVIDER, PROVIDER),
+                (key::ACCOUNT, &signed_in.account),
+                (key::FOLDERS, &folders_json),
+            ])
+            .map_err(Into::into)
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Makes sure the Memoir folders and `vault.json` are still in Drive — the
@@ -549,19 +575,23 @@ pub async fn open_drive_notebook<R: Runtime>(
         .take()
         .ok_or("sign in to Google first")?;
     // Unlocking takes a moment (key derivation); keep it off the async threads.
-    let vault = joining.vault.clone();
-    let generation = joining.signed_in.generation;
+    // Joining and saving the sign-in happen under one session lock, so a
+    // workspace switch can't come in between.
     let passphrase = Zeroizing::new(passphrase);
     let handle = app.clone();
-    let joined = tauri::async_runtime::spawn_blocking(move || {
+    let (joined, joining) = tauri::async_runtime::spawn_blocking(move || {
         let state = handle.state::<AppState>();
-        let mut session = state.session()?;
-        if state.cloud.generation() != generation {
-            return Err(SWITCHED.to_string());
-        }
-        session
-            .join(&vault, &passphrase, remember_key)
-            .map_err(|e| e.to_string())
+        let joined = (|| {
+            let mut session = state.session()?;
+            if !state.cloud.current(&joining.signed_in) {
+                return Err(SWITCHED.to_string());
+            }
+            session
+                .join(&joining.vault, &passphrase, remember_key)
+                .map_err(|e| e.to_string())?;
+            save_sign_in(&mut session, &joining.signed_in)
+        })();
+        (joined, joining)
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -575,7 +605,7 @@ pub async fn open_drive_notebook<R: Runtime>(
         }
         return Err(e);
     }
-    remember(&state, joining.signed_in)?;
+    state.cloud.set(Some(joining.signed_in.provider));
     state.sync.now();
     Ok(())
 }

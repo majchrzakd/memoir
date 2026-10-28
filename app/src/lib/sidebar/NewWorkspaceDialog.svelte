@@ -3,13 +3,16 @@
   import { focusOnMount } from '../ui/focus'
 
   let name = $state('')
+  let busy = $state(false)
   const close = () => (app.newWorkspaceOpen = false)
 
-  function submit(e: SubmitEvent) {
+  async function submit(e: SubmitEvent) {
     e.preventDefault()
-    if (!name.trim()) return
-    close()
-    void app.addWorkspace(name.trim())
+    if (!name.trim() || busy) return
+    busy = true
+    // Closes the dialog once the open note is saved.
+    await app.addWorkspace(name.trim())
+    busy = false
   }
 </script>
 
@@ -35,7 +38,7 @@
       </label>
       <div class="actions">
         <button type="button" onclick={close}>Cancel</button>
-        <button class="primary" type="submit" disabled={!name.trim()}>Continue</button>
+        <button class="primary" type="submit" disabled={busy || !name.trim()}>Continue</button>
       </div>
     </form>
   </div>

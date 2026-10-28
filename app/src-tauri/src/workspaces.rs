@@ -19,6 +19,7 @@ use memoir_core::store::ObjectId;
 use memoir_core::vault::VaultFile;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime, State};
+use zeroize::Zeroizing;
 
 use crate::commands::AppState;
 use crate::session::{Session, Status, VAULT_FILE, delete_notebook_files, write_atomically};
@@ -111,6 +112,9 @@ pub struct Workspaces {
     root: PathBuf,
     keychain: Arc<dyn SecretStore>,
     list: std::sync::Mutex<ListFile>,
+    /// Held while the open workspace changes or one is removed, so a
+    /// workspace being removed is never opened meanwhile.
+    changing: std::sync::Mutex<()>,
 }
 
 impl Workspaces {
@@ -133,6 +137,7 @@ impl Workspaces {
             root,
             keychain,
             list: std::sync::Mutex::new(list.checked()),
+            changing: std::sync::Mutex::default(),
         }
     }
 
@@ -217,8 +222,10 @@ impl Workspaces {
     /// and its keys in the keychain. Its notes in Google Drive stay.
     ///
     /// The files go first: if that fails, the workspace stays listed, with
-    /// its keys, and removing it can be tried again.
-    fn remove(&self, id: &str) -> Result<(), String> {
+    /// its keys, and removing it can be tried again. Returns its Google
+    /// sign-in, if it had one, to be revoked.
+    fn remove(&self, id: &str) -> Result<Option<Zeroizing<String>>, String> {
+        let _changing = self.changing.lock().expect("lock");
         {
             let list = self.list.lock().expect("lock");
             if !list.workspaces.iter().any(|w| w.id == id) {
@@ -241,7 +248,17 @@ impl Workspaces {
             })
         };
         deleted.map_err(|e| format!("could not remove the workspace's files: {e}"))?;
+        let mut token = None;
         if let Some(file) = vault {
+            token = match self.keychain.load_bytes(&cloud_account(&file.vault_id)) {
+                Ok(bytes) => {
+                    bytes.map(|b| Zeroizing::new(String::from_utf8_lossy(&b).into_owned()))
+                }
+                Err(e) => {
+                    log::warn!("could not read a removed workspace's Google sign-in: {e}");
+                    None
+                }
+            };
             for account in [
                 local_db_account(&file.vault_id),
                 cloud_account(&file.vault_id),
@@ -256,7 +273,7 @@ impl Workspaces {
             Ok(())
         })?;
         log::info!("workspace removed from this device");
-        Ok(())
+        Ok(token)
     }
 
     /// The workspace (other than `except`) whose notebook is `vault_id`.
@@ -294,9 +311,10 @@ async fn switch<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> 
     // No sync round may run while the notebook is replaced.
     let _round = state.sync.pause().await;
     let workspaces = app.state::<Workspaces>();
-    workspaces.set_active(id)?;
-    state.cloud.reset();
     {
+        let _changing = workspaces.changing.lock().expect("lock");
+        workspaces.set_active(id)?;
+        state.cloud.reset();
         let mut session = state.session()?;
         session.lock();
         *session = workspaces.open(id);
@@ -342,7 +360,10 @@ pub fn rename_workspace(
 
 #[tauri::command(async)]
 pub fn remove_workspace(workspaces: State<'_, Workspaces>, id: String) -> Result<(), String> {
-    workspaces.remove(&id)
+    if let Some(token) = workspaces.remove(&id)? {
+        crate::cloud::revoke_token(token);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
