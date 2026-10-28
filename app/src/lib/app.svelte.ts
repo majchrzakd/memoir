@@ -10,7 +10,9 @@ import {
   type SyncStatus,
   type TreeItem,
   type UpdateInfo,
+  type WorkspaceList,
 } from './api'
+import type { Editor } from '@tiptap/core'
 import type { EditorOptions } from './editor/extensions'
 import { isIOS } from './platform'
 import { ancestorIds, childrenMap, visibleRows } from './tree'
@@ -24,6 +26,14 @@ export const SYNCED_EVENT = 'memoir-synced'
 const EXPANDED_KEY = 'memoir.expanded'
 const AUTO_LOCK_KEY = 'memoir.autoLockMinutes'
 const OPEN_NOTE_KEY = 'memoir.openNote'
+/** The workspace in the app's data folder itself (app/src-tauri/src/workspaces.rs). */
+const FIRST_WORKSPACE = 'default'
+
+/** Per-workspace preference keys; the first workspace keeps the old names. */
+function workspaceKey(key: string, workspace: string): string {
+  return workspace === FIRST_WORKSPACE ? key : `${key}/${workspace}`
+}
+const WORKSPACE_KEYS = [EXPANDED_KEY, OPEN_NOTE_KEY]
 const THREAD_LAYOUT_KEY = 'memoir.threadLayout'
 
 function load<T>(key: string, fallback: T): T {
@@ -40,6 +50,15 @@ function persist(key: string, value: unknown) {
     localStorage.setItem(key, JSON.stringify(value))
   } catch {
     // UI preferences only; losing them is harmless.
+  }
+}
+
+/** Drops a removed workspace's preferences. */
+function forgetWorkspace(workspace: string) {
+  try {
+    for (const key of WORKSPACE_KEYS) localStorage.removeItem(workspaceKey(key, workspace))
+  } catch {
+    // As above.
   }
 }
 
@@ -63,10 +82,18 @@ class App {
   /** iOS, in the background: everything is hidden from the app switcher. */
   covered = $state(false)
 
+  /** Workspaces on this device; each is a separate notebook. */
+  workspaces = $state<WorkspaceList>({ active: FIRST_WORKSPACE, workspaces: [] })
+  /** The workspace to go back to if adding one is cancelled. */
+  previousWorkspace = $state<string | null>(null)
+  workspaceName = $derived(
+    this.workspaces.workspaces.find((w) => w.id === this.workspaces.active)?.name ?? 'Memoir',
+  )
+
   items = $state.raw<TreeItem[]>([])
-  expanded = new SvelteSet<Id>(load<Id[]>(EXPANDED_KEY, []))
+  expanded = new SvelteSet<Id>()
   selectedId = $state<Id | null>(null)
-  openNoteId = $state<Id | null>(load<Id | null>(OPEN_NOTE_KEY, null))
+  openNoteId = $state<Id | null>(null)
   renamingId = $state<Id | null>(null)
 
   sidebarTab = $state<'notes' | 'later'>('notes')
@@ -108,6 +135,7 @@ class App {
 
   async start() {
     try {
+      await this.loadWorkspaces()
       const status = await api.status()
       // A setup interrupted before the recovery key was confirmed starts over.
       this.screen = status === 'confirm_recovery_key' ? 'first_run' : status
@@ -117,8 +145,21 @@ class App {
     }
   }
 
+  private async loadWorkspaces() {
+    this.workspaces = await api.workspaces()
+    const ws = this.workspaces.active
+    this.expanded.clear()
+    for (const id of load<Id[]>(workspaceKey(EXPANDED_KEY, ws), [])) this.expanded.add(id)
+    this.openNoteId = load<Id | null>(workspaceKey(OPEN_NOTE_KEY, ws), null)
+  }
+
+  private persistExpanded() {
+    persist(workspaceKey(EXPANDED_KEY, this.workspaces.active), [...this.expanded])
+  }
+
   /** Called once the vault is unlocked. */
   async enter() {
+    this.previousWorkspace = null
     this.noteActivity()
     await this.listenToSync()
     await this.refreshTree()
@@ -184,16 +225,102 @@ class App {
       this.fail(e)
       return
     }
-    // Nothing from the notebook stays in memory.
+    this.closeNotebook()
+    this.screen = 'locked'
+  }
+
+  /** Nothing from the notebook stays in memory. */
+  private closeNotebook() {
     this.items = []
     this.replyDrafts.clear()
     this.searchOpen = false
     this.movingId = null
     this.confirmRequest?.resolve(false)
     this.attachmentMenu = null
+    this.linkingEditor = null
+    this.newWorkspaceOpen = false
     this.view = 'note'
     this.listShown = true
-    this.screen = 'locked'
+  }
+
+  // ---- Workspaces ----------------------------------------------------------
+
+  /** Saves and closes the open workspace, then opens `id`. */
+  async switchWorkspace(id: string) {
+    if (id === this.workspaces.active || this.screen === 'loading') return
+    if (!(await this.saved())) return
+    await this.openWorkspace(() => api.switchWorkspace(id))
+  }
+
+  /**
+   * Adds a workspace and shows its first-run screen (new notebook or one from
+   * Drive). The "New workspace" dialog stays open if the open note can't be saved.
+   */
+  async addWorkspace(name: string) {
+    if (this.screen === 'loading' || !(await this.saved())) return
+    this.newWorkspaceOpen = false
+    const previous = this.workspaces.active
+    await this.openWorkspace(async () => {
+      await api.addWorkspace(name)
+      return api.status()
+    })
+    if (this.screen === 'first_run') this.previousWorkspace = previous
+  }
+
+  /** Gives up on a workspace being added: back to the one before, and it's removed. */
+  async cancelNewWorkspace() {
+    const abandoned = this.workspaces.active
+    const back =
+      this.previousWorkspace ?? this.workspaces.workspaces.find((w) => w.id !== abandoned)?.id
+    if (!back) return
+    this.previousWorkspace = null
+    await this.openWorkspace(() => api.switchWorkspace(back))
+    await this.removeWorkspace(abandoned)
+  }
+
+  async renameWorkspace(id: string, name: string) {
+    try {
+      await api.renameWorkspace(id, name)
+      this.workspaces = await api.workspaces()
+    } catch (e) {
+      this.fail(e)
+    }
+  }
+
+  async removeWorkspace(id: string) {
+    try {
+      await api.removeWorkspace(id)
+      forgetWorkspace(id)
+      this.workspaces = await api.workspaces()
+    } catch (e) {
+      this.fail(e)
+    }
+  }
+
+  /** Saves the open note before its notebook closes; false (error shown) if that failed. */
+  private async saved(): Promise<boolean> {
+    try {
+      await this.flushEditor()
+      return true
+    } catch (e) {
+      this.fail(e)
+      return false
+    }
+  }
+
+  private async openWorkspace(open: () => Promise<Status>) {
+    this.closeNotebook()
+    this.screen = 'loading'
+    try {
+      const status = await open()
+      await this.loadWorkspaces()
+      this.screen = status === 'confirm_recovery_key' ? 'first_run' : status
+      if (this.screen === 'unlocked') await this.enter()
+    } catch (e) {
+      this.fail(e)
+      // Show whichever workspace is open now.
+      await this.start()
+    }
   }
 
   setAutoLock(minutes: number) {
@@ -230,13 +357,13 @@ class App {
   toggle(id: Id, open = !this.expanded.has(id)) {
     if (open) this.expanded.add(id)
     else this.expanded.delete(id)
-    persist(EXPANDED_KEY, [...this.expanded])
+    this.persistExpanded()
   }
 
   /** Expands the folders containing `id` and selects it. */
   reveal(id: Id) {
     for (const a of ancestorIds(this.byId, id)) this.expanded.add(a)
-    persist(EXPANDED_KEY, [...this.expanded])
+    this.persistExpanded()
     this.selectedId = id
   }
 
@@ -267,7 +394,20 @@ class App {
     this.view = 'note'
     this.openNoteId = id
     this.reveal(id)
-    persist(OPEN_NOTE_KEY, id)
+    persist(workspaceKey(OPEN_NOTE_KEY, this.workspaces.active), id)
+  }
+
+  /** Follows a link to another note (`note:<id>`). */
+  async openLinkedNote(id: Id) {
+    const item = this.byId.get(id)
+    if (item?.kind === 'note') {
+      this.sidebarTab = 'notes'
+      await this.openNote(id).catch((e) => this.fail(e))
+    } else {
+      this.fail(
+        item ? 'That link points at a folder.' : 'The linked note was deleted or is in the trash.',
+      )
+    }
   }
 
   async newNote(parent: Id | null = this.currentFolder()) {
@@ -314,8 +454,14 @@ class App {
     return {
       attachmentUrl: (id) => api.attachmentUrl(id),
       upload: { upload: (file) => api.addAttachment(file), onError: (e) => this.fail(e) },
+      pickNoteLink: (editor) => (this.linkingEditor = editor),
     }
   }
+
+  /** The editor the "link to a note" picker inserts into (null: closed). */
+  linkingEditor = $state.raw<Editor | null>(null)
+  /** "New workspace" dialog shown. */
+  newWorkspaceOpen = $state(false)
 
   async openAttachment(id: string, name: string) {
     await this.run(() => api.openAttachment(id, name))

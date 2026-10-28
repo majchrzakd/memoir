@@ -669,6 +669,37 @@ fn search_finds_replies_and_points_at_their_note() {
 }
 
 #[test]
+fn backlinks_list_notes_linking_here() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let target = s.create_note(last(None), "Target", "").unwrap();
+    let link = format!("[the target](note:{target})");
+    let b = s
+        .create_note(last(None), "beta", &format!("see {link} and {link}"))
+        .unwrap();
+    let a = s.create_note(last(None), "Alpha", "nothing here").unwrap();
+    s.add_reply(&a, &format!("also {link}")).unwrap();
+    s.create_note(last(None), "Mention", &format!("note:{target} as text"))
+        .unwrap();
+    // A link to itself doesn't count.
+    s.save_note(&target, "Target", &link).unwrap();
+
+    let titles = |s: &Store| -> Vec<String> {
+        s.backlinks(&target)
+            .unwrap()
+            .into_iter()
+            .map(|b| b.title)
+            .collect()
+    };
+    assert_eq!(titles(s), ["Alpha", "beta"], "replies point at their note");
+    s.move_to_trash(&b).unwrap();
+    assert_eq!(titles(s), ["Alpha"]);
+    s.restore(&b).unwrap();
+    s.save_note(&b, "beta", "link removed").unwrap();
+    assert_eq!(titles(s), ["Alpha"]);
+}
+
+#[test]
 fn attachment_metadata_is_recorded_once() {
     let mut f = fixture();
     let id = "ab".repeat(32);

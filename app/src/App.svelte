@@ -5,6 +5,8 @@
   import Main from './lib/screens/Main.svelte'
   import Setup from './lib/screens/Setup.svelte'
   import Unlock from './lib/screens/Unlock.svelte'
+  import NoteLinkDialog from './lib/editor/NoteLinkDialog.svelte'
+  import NewWorkspaceDialog from './lib/sidebar/NewWorkspaceDialog.svelte'
   import ConfirmDialog from './lib/ui/ConfirmDialog.svelte'
   import ContextMenu from './lib/ui/ContextMenu.svelte'
 
@@ -25,6 +27,14 @@
 {/if}
 
 <ConfirmDialog />
+
+{#if app.linkingEditor && app.screen === 'unlocked'}
+  <NoteLinkDialog editor={app.linkingEditor} />
+{/if}
+
+{#if app.newWorkspaceOpen}
+  <NewWorkspaceDialog />
+{/if}
 
 {#if app.attachmentMenu}
   {@const target = app.attachmentMenu}

@@ -3,15 +3,23 @@
     label: string
     shortcut?: string
     danger?: boolean
+    /** Shows a check mark (e.g. the current choice). */
+    checked?: boolean
+    /** Draws a line above the item. */
+    separator?: boolean
     action: () => void
   }
 </script>
 
 <script lang="ts">
+  import Icon from './Icon.svelte'
+
   let { x, y, items, onclose }: { x: number; y: number; items: MenuItem[]; onclose: () => void } =
     $props()
 
   let menu = $state<HTMLDivElement>()
+  /** Leave room for check marks when any item can have one. */
+  const checked = $derived(items.some((i) => i.checked !== undefined))
   let left = $state(0)
   let top = $state(0)
 
@@ -55,16 +63,23 @@
   style:top="{top}px"
   {onkeydown}
 >
-  {#each items as item (item.label)}
+  {#each items as item, i (i)}
     <button
-      role="menuitem"
       class:danger={item.danger}
+      class:separator={item.separator}
+      role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
+      aria-checked={item.checked}
       onclick={() => {
         onclose()
         item.action()
       }}
     >
-      <span>{item.label}</span>
+      <span class="label">
+        {#if checked}<span class="check"
+            >{#if item.checked}<Icon name="check" size={14} />{/if}</span
+          >{/if}
+        {item.label}
+      </span>
       {#if item.shortcut}<kbd>{item.shortcut}</kbd>{/if}
     </button>
   {/each}
@@ -102,6 +117,33 @@
   button:focus-visible {
     background: var(--bg-hover);
     outline: none;
+  }
+
+  button.separator {
+    position: relative;
+    margin-top: 9px;
+  }
+
+  button.separator::before {
+    content: '';
+    position: absolute;
+    top: -5px;
+    right: 4px;
+    left: 4px;
+    border-top: 1px solid var(--border);
+  }
+
+  .label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .check {
+    display: inline-flex;
+    width: 14px;
+    color: var(--accent);
   }
 
   button.danger {

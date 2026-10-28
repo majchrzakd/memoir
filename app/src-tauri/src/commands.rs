@@ -5,8 +5,8 @@
 use std::sync::{Mutex, MutexGuard};
 
 use memoir_core::store::{
-    HistoryEntry, LaterItem, Note, ObjectId, Placement, Reply, SearchHit, Store, StoreError,
-    TreeItem,
+    Backlink, HistoryEntry, LaterItem, Note, ObjectId, Placement, Reply, SearchHit, Store,
+    StoreError, TreeItem,
 };
 use tauri::State;
 
@@ -225,6 +225,12 @@ pub fn search(
     limit: usize,
 ) -> CmdResult<Vec<SearchHit>> {
     state.with_store(|s| s.search(&query, limit.min(200)))
+}
+
+/// Notes that link to this one.
+#[tauri::command(async)]
+pub fn backlinks(state: State<'_, AppState>, id: ObjectId) -> CmdResult<Vec<Backlink>> {
+    state.with_store(|s| s.backlinks(&id))
 }
 
 #[tauri::command(async)]

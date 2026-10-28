@@ -16,6 +16,8 @@
    * Drive already (only offered when this build can sign in to Google). */
   let mode = $state<'loading' | 'choose' | 'create' | 'join'>('loading')
   let canJoin = $state(false)
+  /** Setting up a workspace added next to others (it can be cancelled). */
+  const adding = $derived(app.previousWorkspace !== null)
 
   $effect(() => {
     api
@@ -71,8 +73,16 @@
     <!-- Decided in a moment; nothing to show meanwhile. -->
   {:else if mode === 'choose'}
     <section class="card">
-      <h1>Welcome to Memoir</h1>
-      <p class="muted">Is this your first notebook, or do you already use Memoir elsewhere?</p>
+      {#if adding}
+        <h1>New workspace: {app.workspaceName}</h1>
+        <p class="muted">
+          Create a new notebook for this workspace, or open one you already keep in another Google
+          account's Drive — your work account, for example.
+        </p>
+      {:else}
+        <h1>Welcome to Memoir</h1>
+        <p class="muted">Is this your first notebook, or do you already use Memoir elsewhere?</p>
+      {/if}
       <div class="choices">
         <button class="choice" onclick={() => (mode = 'create')} use:focusOnMount>
           <Icon name="notePlus" size={22} />
@@ -89,12 +99,17 @@
           </span>
         </button>
       </div>
+      {#if adding}
+        <button class="link cancel" onclick={() => app.cancelNewWorkspace()}>
+          Cancel — don't add this workspace
+        </button>
+      {/if}
     </section>
   {:else if mode === 'join'}
     <JoinFromDrive onback={() => (mode = 'choose')} />
   {:else if !recoveryKey}
     <form class="card" onsubmit={create}>
-      <h1>Create your notebook</h1>
+      <h1>{adding ? `Create the notebook for ${app.workspaceName}` : 'Create your notebook'}</h1>
       <p class="muted">
         Your notes are encrypted on this device with a key protected by your passphrase. Nobody else
         — not Google, not us — can read them.
@@ -125,6 +140,15 @@
         {#if canJoin}
           <button type="button" class="link" disabled={busy} onclick={() => (mode = 'choose')}>
             Back
+          </button>
+        {:else if adding}
+          <button
+            type="button"
+            class="link"
+            disabled={busy}
+            onclick={() => app.cancelNewWorkspace()}
+          >
+            Cancel
           </button>
         {/if}
       </div>
@@ -282,6 +306,11 @@
     background: none;
     color: var(--accent);
     font-size: inherit;
+  }
+
+  .cancel {
+    align-self: flex-start;
+    margin-top: 4px;
   }
 
   .link:hover {

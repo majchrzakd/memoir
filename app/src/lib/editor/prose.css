@@ -150,6 +150,25 @@
   font-size: 0.9em;
 }
 
+/* Links to other notes: underlined with a dotted line, open on click. */
+.prose a[href^='note:'] {
+  color: var(--accent);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.prose a[href^='note:']::before {
+  content: '↗';
+  margin-right: 2px;
+  font-size: 0.85em;
+}
+
+.prose a[href^='note:'].missing {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
 .prose table {
   border-collapse: collapse;
   margin: 0.6em 0;

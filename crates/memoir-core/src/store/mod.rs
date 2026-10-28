@@ -32,6 +32,9 @@ const HISTORY_MAX_VERSIONS: i64 = 50;
 /// Versions saved this close together are kept as one (the later).
 const HISTORY_MERGE_MS: i64 = 2 * 60 * 1000;
 
+/// Scheme of links between notes in Markdown: `[text](note:<id>)`.
+pub const NOTE_LINK_SCHEME: &str = "note:";
+
 /// Marks the start / end of a matched term in [`SearchHit::snippet`].
 pub const MATCH_START: char = '\u{1}';
 pub const MATCH_END: char = '\u{2}';
@@ -217,6 +220,13 @@ pub struct SearchHit {
     pub snippet: String,
     /// Set when the match is in a reply.
     pub reply_id: Option<ObjectId>,
+}
+
+/// A note that links to another one (see [`Store::backlinks`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Backlink {
+    pub id: ObjectId,
+    pub title: String,
 }
 
 /// An attachment (see `crate::blobs`), referenced from Markdown as
@@ -976,6 +986,32 @@ impl Store {
                     title: r.get(2)?,
                     snippet: r.get(3)?,
                     reply_id: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Notes that link to `id` (`note:<id>` in their text or in a reply in
+    /// their thread), by title. Trashed notes and the note itself are left
+    /// out. Scans the note text: fast enough for tens of thousands of notes
+    /// and needs no index to keep in step with edits and sync.
+    pub fn backlinks(&self, id: &ObjectId) -> Result<Vec<Backlink>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "{HIDDEN_CTE}
+             SELECT DISTINCT coalesce(p.id, o.id) AS note, coalesce(p.title, o.title) AS title
+             FROM note_bodies b
+             JOIN objects o ON o.seq = b.seq
+             LEFT JOIN objects p ON p.id = o.parent_id AND p.kind = 2
+             WHERE instr(b.body, ?1) > 0 AND o.id NOT IN hidden
+               AND coalesce(p.id, o.id) <> ?2
+             ORDER BY title COLLATE NOCASE, note"
+        ))?;
+        let needle = format!("]({NOTE_LINK_SCHEME}{id})");
+        Ok(stmt
+            .query_map(params![needle, id], |r| {
+                Ok(Backlink {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?)

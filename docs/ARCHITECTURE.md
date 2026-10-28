@@ -217,6 +217,21 @@ The UI shows the thread below the note or in a side column (a switch,
 remembered per device; side needs a wide window). Unsent reply drafts live
 in memory only.
 
+**Links between notes**: a note links to another as `[text](note:<id>)`
+in its Markdown (`NOTE_LINK_SCHEME`), so links sync, merge and survive
+history like any other text, and keep working when the target is renamed
+or moved. In the editor, typing `[[` (or the toolbar's link button) opens a
+picker of note titles (`editor/NoteLinkDialog.svelte`); with text selected
+it links that text, otherwise it inserts the note's title. A note link
+opens the note on double-click or Ctrl/⌘-click (a single click places the
+cursor, so the link's text can be edited) and on a tap on touch screens;
+one to a deleted or trashed note says so (and is shown struck through). Below the text, **Linked from** lists the notes whose text
+or thread links here (`Store::backlinks`: a scan of the note text, like
+search, with no index to keep in step with edits and sync; trashed notes
+are left out). Export turns note links into relative links to the `.md`
+files; links to notes that are gone stay as they were. Links never cross
+workspaces.
+
 **Attachments** (M4): pasted, dropped or attached files are encrypted into
 `blobs/<id>.mmr` in the app's data folder (blob stream format; the id is a
 keyed HMAC of the content, so identical files are stored once and the id is
@@ -420,6 +435,37 @@ that catches up — a change missing from one poll arrives in a later one — an
 never assumes a just-made change is already visible to other devices.
 
 ---
+
+### Workspaces
+A device can hold several notebooks, e.g. a personal one in a personal
+Google Drive and a work one in a work Drive (`app/src-tauri/src/workspaces.rs`).
+Each workspace is a complete, separate notebook: its own vault (passphrase,
+recovery key), database, attachments and Google sign-in — nothing is shared,
+so the work notebook can't be read with the personal passphrase and vice
+versa. Keychain entries are per vault id, so they never collide.
+
+- **Files:** `workspaces.json` in the data folder lists the workspaces
+  (id, name — nothing secret) and which is open. The first workspace is the
+  data folder itself, so a notebook from before workspaces simply becomes it
+  (and its UI preferences keep their names); others live in
+  `workspaces/<id>/` with the same layout.
+- **One open at a time.** Switching (the name at the top of the sidebar, the
+  lock screen, or Settings → Workspaces) saves the editor, pushes pending
+  changes (≤ 10 s), waits for a running sync round, closes the notebook like
+  a lock does, and opens the other one — unlocked at once if this device
+  remembers its key, otherwise at the unlock screen. Changes that didn't
+  make it up stay in that workspace's outbox and go up when it's open
+  again. Only the open workspace syncs.
+- **Adding** one asks for a name and shows the first-run screen: a new
+  notebook, or one already in (another account's) Google Drive; Cancel
+  removes it again. Google's sign-in always offers the account chooser
+  (`prompt=consent select_account`), since the browser is often signed in
+  to several. A Drive whose notebook is already a workspace on this device
+  is refused, as is (as before) connecting a Drive that holds a different
+  notebook — one notebook per Google account.
+- **Removing** one (not the open one) deletes its local files and keychain
+  entries; its Drive copy stays, so it can be opened again from there.
+- Expanded folders and the open note are remembered per workspace.
 
 ## 8. Data ownership & recovery
 

@@ -20,8 +20,10 @@ use memoir_core::vault::{self, KdfParams, NewVault, UnlockedVault, VaultError, V
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-const VAULT_FILE: &str = "vault.json";
+pub(crate) const VAULT_FILE: &str = "vault.json";
 const DB_FILE: &str = "memoir.db";
+/// The database with SQLite's write-ahead log files.
+const DB_FILES: [&str; 3] = [DB_FILE, "memoir.db-wal", "memoir.db-shm"];
 /// Encrypted attachments.
 const BLOBS_DIR: &str = "blobs";
 /// Decrypted copies of attachments opened in other programs; emptied on
@@ -218,7 +220,7 @@ impl Session {
     /// be opened with a new key anyway.
     fn remove_leftovers(&self) -> Result<()> {
         fs::create_dir_all(&self.dir)?;
-        for leftover in [DB_FILE, "memoir.db-wal", "memoir.db-shm"] {
+        for leftover in DB_FILES {
             let path = self.dir.join(leftover);
             if path.exists() {
                 fs::remove_file(path)?;
@@ -382,9 +384,34 @@ fn io_error(e: memoir_core::keystore::KeystoreError) -> SessionError {
     SessionError::Io(std::io::Error::other(e.to_string()))
 }
 
+/// Deletes the notebook in `dir` from this device: the database,
+/// attachments and opened copies first, the vault file last, so a failure
+/// part-way leaves a notebook that still opens (and can be deleted again).
+/// Other files in `dir` stay.
+pub(crate) fn delete_notebook_files(dir: &Path) -> std::io::Result<()> {
+    let vault = dir.join(VAULT_FILE);
+    let files = DB_FILES.map(|name| dir.join(name));
+    let folders = [BLOBS_DIR, OPENED_DIR].map(|name| dir.join(name));
+    for file in files {
+        ignore_not_found(fs::remove_file(file))?;
+    }
+    for folder in folders {
+        ignore_not_found(fs::remove_dir_all(folder))?;
+    }
+    ignore_not_found(fs::remove_file(vault.with_extension("tmp")))?;
+    ignore_not_found(fs::remove_file(vault))
+}
+
+fn ignore_not_found(result: std::io::Result<()>) -> std::io::Result<()> {
+    match result {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
 /// Writes via a temporary file and rename, so a crash never leaves a
 /// half-written file behind.
-fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     {
         let mut f = fs::File::create(&tmp)?;

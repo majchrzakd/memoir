@@ -6,6 +6,7 @@
   import { fullTime, sinceTime } from '../time'
   import Icon from '../ui/Icon.svelte'
   import { attachmentActions } from './attachmentActions'
+  import Backlinks from './Backlinks.svelte'
   import { editorExtensions } from './extensions'
   import HistoryDialog from './HistoryDialog.svelte'
   import { replaceMarkdown } from './replaceMarkdown'
@@ -290,6 +291,7 @@
           </div>
         {/if}
         <div class="body" bind:this={host} use:attachmentActions></div>
+        <Backlinks {noteId} />
         {#if !side}
           <div class="below">
             {#key noteId}<Thread {noteId} bind:this={thread} />{/key}

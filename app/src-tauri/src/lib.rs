@@ -12,6 +12,7 @@ mod shutdown;
 mod shutdown_block;
 mod sync;
 mod update;
+mod workspaces;
 
 use memoir_core::keystore::OsKeychain;
 #[cfg(target_os = "macos")]
@@ -19,7 +20,6 @@ use tauri::{AppHandle, RunEvent, Runtime};
 use tauri::{Manager, WindowEvent};
 
 use crate::commands::AppState;
-use crate::session::Session;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -53,7 +53,9 @@ pub fn run() {
                 None => app.path().app_local_data_dir()?,
             };
             let keychain = OsKeychain::new(app.config().identifier.clone());
-            let session = Session::open(dir, Box::new(keychain));
+            let workspaces = workspaces::Workspaces::load(dir, std::sync::Arc::new(keychain));
+            let session = workspaces.open_active();
+            app.manage(workspaces);
             log::info!("session opened: {:?}", session.status());
             app.manage(AppState {
                 session: std::sync::Mutex::new(session),
@@ -103,6 +105,7 @@ pub fn run() {
             commands::note,
             commands::save_note,
             commands::search,
+            commands::backlinks,
             commands::note_history,
             commands::restore_version,
             commands::set_later,
@@ -132,6 +135,11 @@ pub fn run() {
             update::available_update,
             update::install_update,
             sync::sync_now,
+            workspaces::workspaces,
+            workspaces::switch_workspace,
+            workspaces::add_workspace,
+            workspaces::rename_workspace,
+            workspaces::remove_workspace,
         ])
         .build(tauri::generate_context!())
         .expect("error while starting Memoir")

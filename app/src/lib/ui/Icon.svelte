@@ -30,6 +30,8 @@
     alert: 'M12 3 2 20h20zM12 10v4M12 17v.5',
     history: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 8v4l3 2',
     more: 'M5 12h.01M12 12h.01M19 12h.01',
+    link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
+    chevronDown: 'm6 9 6 6 6-6',
   } as const
   export type IconName = keyof typeof PATHS
 </script>

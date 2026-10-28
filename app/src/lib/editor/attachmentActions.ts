@@ -1,5 +1,14 @@
 import { app, SYNCED_EVENT } from '../app.svelte'
+import { isApple, keys, touch } from '../platform'
 import { attachmentId } from './attachments'
+import { linkedNoteId } from './noteLinks'
+
+/** The note a link the event happened on points at, if any. */
+function noteLinkAt(event: Event): { id: string; link: HTMLAnchorElement } | null {
+  const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href^="note:"]')
+  const id = linkedNoteId(link?.getAttribute('href'))
+  return link && id ? { id, link } : null
+}
 
 /** The attachment (file link or image) an event happened on, if any. */
 function attachmentAt(event: Event): { id: string; name: string } | null {
@@ -15,13 +24,40 @@ function attachmentAt(event: Event): { id: string; name: string } | null {
 /**
  * Svelte action for an editor's container: double-click opens an
  * attachment, right-click offers Open / Save as. A single click only places
- * the cursor (and never follows the link).
+ * the cursor (and never follows the link). A link to another note opens the
+ * same way, or with Ctrl/⌘-click; on touch screens with a tap (there's no
+ * keyboard to hold, and a double tap selects a word).
  */
 export function attachmentActions(node: HTMLElement) {
   const onclick = (e: MouseEvent) => {
     if (attachmentAt(e)) e.preventDefault()
+    const note = noteLinkAt(e)
+    if (!note || e.button !== 0) return
+    e.preventDefault()
+    if (touch.current || (isApple ? e.metaKey : e.ctrlKey)) {
+      e.stopPropagation()
+      void app.openLinkedNote(note.id)
+    }
+  }
+  // Says where a note link goes (or that the note is gone).
+  const onmouseover = (e: MouseEvent) => {
+    const note = noteLinkAt(e)
+    if (!note) return
+    const target = app.byId.get(note.id)
+    note.link.title =
+      target?.kind === 'note'
+        ? `Double-click or ${keys('Ctrl')}-click to open “${target.title || 'Untitled'}”`
+        : 'The linked note was deleted or is in the trash'
+    note.link.classList.toggle('missing', target?.kind !== 'note')
   }
   const ondblclick = (e: MouseEvent) => {
+    const note = noteLinkAt(e)
+    if (note) {
+      e.preventDefault()
+      e.stopPropagation()
+      void app.openLinkedNote(note.id)
+      return
+    }
     const found = attachmentAt(e)
     if (!found) return
     e.preventDefault()
@@ -58,6 +94,7 @@ export function attachmentActions(node: HTMLElement) {
     }
   }
   node.addEventListener('click', onclick, true)
+  node.addEventListener('mouseover', onmouseover)
   node.addEventListener('dblclick', ondblclick, true)
   node.addEventListener('contextmenu', oncontextmenu, true)
   node.addEventListener('error', onerror, true)
@@ -66,6 +103,7 @@ export function attachmentActions(node: HTMLElement) {
   return {
     destroy() {
       node.removeEventListener('click', onclick, true)
+      node.removeEventListener('mouseover', onmouseover)
       node.removeEventListener('dblclick', ondblclick, true)
       node.removeEventListener('contextmenu', oncontextmenu, true)
       node.removeEventListener('error', onerror, true)

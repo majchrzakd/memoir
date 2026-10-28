@@ -102,6 +102,19 @@ impl Sync {
     pub fn status(&self) -> SyncStatus {
         self.status.lock().expect("lock").clone()
     }
+
+    /// Waits for a running round to end; none starts while the guard lives.
+    pub async fn pause(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.round.lock().await
+    }
+
+    /// Another notebook was opened (workspace switch): forgets the old
+    /// one's status and syncs the new one.
+    pub fn reset<R: Runtime>(&self, app: &AppHandle<R>) {
+        *self.status.lock().expect("lock") = SyncStatus::default();
+        set_status(app, &app.state::<AppState>(), |_| {});
+        self.recheck_cloud();
+    }
 }
 
 /// The engine's view of this device's data.

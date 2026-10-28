@@ -1,4 +1,4 @@
-import type { Extensions } from '@tiptap/core'
+import type { Editor, Extensions } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
 import { TableKit } from '@tiptap/extension-table'
@@ -9,6 +9,8 @@ import {
   attachmentImage,
   type AttachmentUpload,
 } from './attachments'
+import { NOTE_LINK_SCHEME } from '../api/types'
+import { NoteLinkTrigger } from './noteLinks'
 import { SafeParagraph } from './safeParagraph'
 
 export interface EditorOptions {
@@ -16,6 +18,8 @@ export interface EditorOptions {
   attachmentUrl?: (id: string) => string
   /** Enables pasting / dropping files. */
   upload?: AttachmentUpload
+  /** Typing `[[` asks for a note to link to. */
+  pickNoteLink?: (editor: Editor) => void
 }
 
 /**
@@ -28,9 +32,11 @@ export function editorExtensions(options: EditorOptions = {}): Extensions {
       paragraph: false,
       link: {
         openOnClick: false,
-        // Links to attachments are kept; other schemes follow TipTap's rules.
+        // Links to attachments and notes are kept; other schemes follow TipTap's rules.
         isAllowedUri: (url, { defaultValidate }) =>
-          url.startsWith(ATTACHMENT_SCHEME) || defaultValidate(url),
+          url.startsWith(ATTACHMENT_SCHEME) ||
+          url.startsWith(NOTE_LINK_SCHEME) ||
+          defaultValidate(url),
       },
     }),
     SafeParagraph,
@@ -39,6 +45,7 @@ export function editorExtensions(options: EditorOptions = {}): Extensions {
     TableKit,
     attachmentImage(options.attachmentUrl ?? ((id) => ATTACHMENT_SCHEME + id)),
     Attachments.configure({ upload: options.upload ?? null }),
+    NoteLinkTrigger.configure({ onTrigger: options.pickNoteLink ?? null }),
     Markdown,
   ]
 }

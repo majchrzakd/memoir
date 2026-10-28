@@ -6,6 +6,7 @@
   import LaterList from './LaterList.svelte'
   import SyncIndicator from './SyncIndicator.svelte'
   import UpdateNotice from './UpdateNotice.svelte'
+  import WorkspaceSwitcher from './WorkspaceSwitcher.svelte'
   import Tree from './Tree.svelte'
 
   let later = $state.raw<LaterItem[]>([])
@@ -23,7 +24,7 @@
 
 <nav class="sidebar" aria-label="Notebook">
   <header>
-    <span class="brand">Memoir</span>
+    <WorkspaceSwitcher />
     <button class="icon" title="New note ({keys('Ctrl+N')})" onclick={() => app.newNote()}>
       <Icon name="notePlus" size={18} />
     </button>
@@ -150,12 +151,6 @@
     align-items: center;
     gap: 2px;
     padding: 12px 10px 8px 16px;
-  }
-
-  .brand {
-    flex: 1;
-    font-weight: 600;
-    font-size: 15px;
   }
 
   .search {

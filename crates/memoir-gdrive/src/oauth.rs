@@ -185,8 +185,10 @@ async fn authorize<F: Future<Output = Result<String, OAuthError>>>(
             ("code_challenge_method", "S256"),
             ("state", state.as_str()),
             ("access_type", "offline"),
-            // Always ask for consent, so Google issues a refresh token.
-            ("prompt", "consent"),
+            // Always ask for consent, so Google issues a refresh token, and
+            // which account to use: workspaces live in different accounts,
+            // and the browser may be signed in to several.
+            ("prompt", "consent select_account"),
         ],
     )
     .map_err(|e| OAuthError::Protocol(e.to_string()))?;
