@@ -6,6 +6,7 @@ import {
   displayTitle,
   dropTarget,
   folderPath,
+  moveTargets,
   snippetParts,
   visibleRows,
 } from './tree'
@@ -125,4 +126,19 @@ it('names untitled items', () => {
   expect(displayTitle({ title: '  ', kind: 'note' })).toBe('Untitled')
   expect(displayTitle({ title: '', kind: 'folder' })).toBe('Untitled folder')
   expect(displayTitle({ title: 'X', kind: 'note' })).toBe('X')
+})
+
+describe('moveTargets', () => {
+  const targets = (id: string) =>
+    moveTargets(items, id).map((t) => `${'  '.repeat(t.depth)}${t.title}${t.current ? ' *' : ''}`)
+
+  it('lists the top level and every folder, marking the current one', () => {
+    expect(targets('plan')).toEqual(['Top level', '  Work', '    Projects *'])
+    expect(targets('inbox')).toEqual(['Top level *', '  Work', '    Projects'])
+  })
+
+  it('leaves out a folder and everything inside it', () => {
+    expect(targets('work')).toEqual(['Top level *'])
+    expect(targets('projects')).toEqual(['Top level', '  Work *'])
+  })
 })

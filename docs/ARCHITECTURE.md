@@ -639,7 +639,10 @@ Tauri's iOS build of the same app; the Xcode project is generated into
   button for the row menu (no right-click on touch); a one-row scrolling
   toolbar; no keyboard hints; safe-area padding (`viewport-fit=cover`);
   16 px text on touch screens, which also stops iOS zooming into focused
-  fields. A narrow desktop window gets the same one-pane layout.
+  fields. A narrow desktop window gets the same one-pane layout. With no
+  drag & drop on touch, the row menu's "Move to…" picks a folder
+  (`sidebar/MoveDialog.svelte`, `moveTargets` in `tree.ts`); it moves to the
+  end of that folder, and works on the desktop too.
 - **Leaving the app** (`visibilitychange`): the editor is saved and a sync
   starts; coming back pulls. iOS may suspend the app a few seconds later,
   and anything not pushed by then goes up on the next sync. Timers stop
@@ -653,5 +656,5 @@ Tauri's iOS build of the same app; the Xcode project is generated into
   `state` and exchanges the code (PKCE, no client secret). Same project as
   the desktop client, so both see the same Drive files. The refresh token is
   per device, in the iOS Keychain.
-- **Still to do:** a background task so a push can finish after leaving the app, moving notes
-  without drag & drop, share sheet for attachments and export.
+- **Still to do:** a background task so a push can finish after leaving the app,
+  share sheet for attachments and export.

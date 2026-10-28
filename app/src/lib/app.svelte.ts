@@ -92,6 +92,8 @@ class App {
   private lastActivity = Date.now()
 
   searchOpen = $state(false)
+  /** The item "Move to…" is choosing a folder for. */
+  movingId = $state<Id | null>(null)
   confirmRequest = $state<ConfirmRequest | null>(null)
   error = $state<string | null>(null)
 
@@ -178,6 +180,7 @@ class App {
     this.items = []
     this.replyDrafts.clear()
     this.searchOpen = false
+    this.movingId = null
     this.confirmRequest?.resolve(false)
     this.attachmentMenu = null
     this.view = 'note'
@@ -335,6 +338,13 @@ class App {
       await this.refreshTree()
       this.reveal(id)
     })
+  }
+
+  /** "Move to…": to the end of `parent` (null: the top level). */
+  async moveInto(id: Id, parent: Id | null) {
+    this.movingId = null
+    if (this.byId.get(id)?.parent_id === parent) return
+    await this.move(id, { parent, position: { type: 'last' } })
   }
 
   async trash(id: Id) {

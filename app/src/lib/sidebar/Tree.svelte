@@ -144,6 +144,7 @@
             ]
           : [{ label: 'Open', action: () => app.openNote(item.id) }]),
         { label: 'Rename', shortcut: hint('F2'), action: () => (app.renamingId = item.id) },
+        { label: 'Move to…', action: () => (app.movingId = item.id) },
         {
           label: 'Move to trash',
           shortcut: hint('Del'),

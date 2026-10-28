@@ -5,6 +5,7 @@
   import Editor from '../editor/Editor.svelte'
   import { keys, phone, touch } from '../platform'
   import SearchPalette from '../SearchPalette.svelte'
+  import MoveDialog from '../sidebar/MoveDialog.svelte'
   import Sidebar from '../sidebar/Sidebar.svelte'
   import SettingsView from '../SettingsView.svelte'
   import TrashView from '../TrashView.svelte'
@@ -151,6 +152,9 @@
 
 {#if app.searchOpen}
   <SearchPalette />
+{/if}
+{#if app.movingId}
+  <MoveDialog id={app.movingId} />
 {/if}
 
 <style>
