@@ -72,14 +72,10 @@ struct SignedIn {
     generation: u64,
 }
 
-impl SignedIn {
-    /// Gives up on this sign-in: Memoir's access is revoked in the background.
-    fn revoke_later(self) {
-        tauri::async_runtime::spawn(async move {
-            let _ = self.provider.revoke().await;
-        });
-    }
-}
+// A sign-in that isn't used is dropped, not revoked, unless its Drive has no
+// notebook: Google's revoke removes Memoir's access for the whole account, so
+// it would also cut off the other sign-ins for that account (on other
+// devices, or another workspace here). Only Disconnect revokes on purpose.
 
 struct Joining {
     signed_in: SignedIn,
@@ -128,9 +124,7 @@ impl Cloud {
         self.set(None);
         #[cfg(target_os = "ios")]
         self.redirect_lost.store(false, Ordering::SeqCst);
-        if let Some(joining) = self.joining.lock().expect("lock").take() {
-            joining.signed_in.revoke_later();
-        }
+        self.joining.lock().expect("lock").take();
     }
 
     fn generation(&self) -> u64 {
@@ -177,20 +171,6 @@ fn oauth_config() -> Option<OAuthConfig> {
 
 /// Recreates the provider from saved state after the vault unlocks. No
 /// network access; problems surface on the next check or sync.
-/// Revokes a Google sign-in this device no longer keeps (a removed
-/// workspace's), in the background.
-pub fn revoke_token(token: Zeroizing<String>) {
-    let Some(config) = oauth_config() else {
-        return;
-    };
-    let provider = DriveProvider::new(DriveConfig::google(config), token);
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = provider.revoke().await {
-            log::warn!("could not revoke a removed workspace's Google token: {e}");
-        }
-    });
-}
-
 pub fn restore(state: &AppState) {
     let restored = (|| -> Option<DriveProvider> {
         let config = oauth_config()?;
@@ -279,14 +259,12 @@ async fn connect<R: Runtime>(
         .and_then(|s| s.vault_file().map_err(|e| e.to_string()))?;
     let signed_in = sign_in(app, state, config).await?;
     if !state.cloud.current(&signed_in) {
-        signed_in.revoke_later();
         return Err(SWITCHED.into());
     }
 
     // One notebook per Drive: refuse a Drive that holds a different one.
     match remote_vault(&signed_in.provider).await? {
         Some(remote) if remote.vault_id != local_vault.vault_id => {
-            let _ = signed_in.provider.revoke().await;
             return Err(format!(
                 "The Memoir folder in {} already holds a different notebook. Use another Google \
                  account, or remove that Memoir folder from Drive.",
@@ -444,16 +422,14 @@ async fn reconcile_vault(state: &AppState, provider: &DriveProvider) -> Result<(
 
 /// Saves the sign-in for this (unlocked) notebook and starts using it.
 fn remember(state: &AppState, signed_in: SignedIn) -> Result<(), String> {
-    {
-        let mut session = state.session()?;
-        // The session is replaced only after `Cloud::reset`, and not while
-        // this lock is held.
-        if !state.cloud.current(&signed_in) {
-            signed_in.revoke_later();
-            return Err(SWITCHED.into());
-        }
-        save_sign_in(&mut session, &signed_in)?;
+    let mut session = state.session()?;
+    // A switch resets the cloud before it replaces the session, and can't
+    // replace it while this lock is held; so the connection is set before
+    // the lock goes, or a switch's `restore` could run first.
+    if !state.cloud.current(&signed_in) {
+        return Err(SWITCHED.into());
     }
+    save_sign_in(&mut session, &signed_in)?;
     state.cloud.set(Some(signed_in.provider));
     Ok(())
 }
@@ -525,7 +501,7 @@ pub async fn find_drive_notebook<R: Runtime>(
             Some(vault) => {
                 let workspaces = app.state::<Workspaces>();
                 if let Some(other) = workspaces.holding(&vault.vault_id, &workspaces.active()) {
-                    let _ = signed_in.provider.revoke().await;
+                    // That workspace uses this account: the sign-in is only dropped.
                     return Err(format!(
                         "The notebook in the Google Drive of {} is already on this device, in the \
                          workspace \"{}\".",
@@ -535,6 +511,7 @@ pub async fn find_drive_notebook<R: Runtime>(
                 Ok(Joining { signed_in, vault })
             }
             None => {
+                // No notebook in this Drive, so nothing else uses the sign-in.
                 let account = signed_in.account.clone();
                 let _ = signed_in.provider.revoke().await;
                 Err(format!(
@@ -551,7 +528,6 @@ pub async fn find_drive_notebook<R: Runtime>(
     let mut waiting = state.cloud.joining.lock().expect("lock");
     // `Cloud::reset` counts the switch before taking what's waiting here.
     if !state.cloud.current(&joining.signed_in) {
-        joining.signed_in.revoke_later();
         return Err(SWITCHED.into());
     }
     *waiting = Some(joining);
@@ -575,48 +551,50 @@ pub async fn open_drive_notebook<R: Runtime>(
         .take()
         .ok_or("sign in to Google first")?;
     // Unlocking takes a moment (key derivation); keep it off the async threads.
-    // Joining and saving the sign-in happen under one session lock, so a
-    // workspace switch can't come in between.
+    // Joining, saving the sign-in and connecting happen under one session
+    // lock, so a workspace switch can't come in between (see `remember`).
     let passphrase = Zeroizing::new(passphrase);
     let handle = app.clone();
-    let (joined, joining) = tauri::async_runtime::spawn_blocking(move || {
+    let failed = tauri::async_runtime::spawn_blocking(move || {
         let state = handle.state::<AppState>();
-        let joined = (|| {
-            let mut session = state.session()?;
-            if !state.cloud.current(&joining.signed_in) {
-                return Err(SWITCHED.to_string());
+        let mut session = match state.session() {
+            Ok(session) => session,
+            Err(e) => return Some((e, joining)),
+        };
+        if !state.cloud.current(&joining.signed_in) {
+            return Some((SWITCHED.to_string(), joining));
+        }
+        let joined = session
+            .join(&joining.vault, &passphrase, remember_key)
+            .map_err(|e| e.to_string())
+            .and_then(|()| save_sign_in(&mut session, &joining.signed_in));
+        match joined {
+            Ok(()) => {
+                state.cloud.set(Some(joining.signed_in.provider));
+                None
             }
-            session
-                .join(&joining.vault, &passphrase, remember_key)
-                .map_err(|e| e.to_string())?;
-            save_sign_in(&mut session, &joining.signed_in)
-        })();
-        (joined, joining)
+            Err(e) => Some((e, joining)),
+        }
     })
     .await
     .map_err(|e| e.to_string())?;
-    if let Err(e) = joined {
+    if let Some((e, joining)) = failed {
         // Wrong passphrase: keep the sign-in for another try.
         let mut waiting = state.cloud.joining.lock().expect("lock");
         if state.cloud.current(&joining.signed_in) {
             *waiting = Some(joining);
-        } else {
-            joining.signed_in.revoke_later();
         }
         return Err(e);
     }
-    state.cloud.set(Some(joining.signed_in.provider));
     state.sync.now();
     Ok(())
 }
 
-/// New device: gives up on the notebook found in Drive.
+/// New device: gives up on the notebook found in Drive. The sign-in is
+/// dropped, not revoked: the notebook's other devices use the same access.
 #[tauri::command]
 pub async fn forget_drive_notebook(state: State<'_, AppState>) -> Result<(), String> {
-    let joining = state.cloud.joining.lock().expect("lock").take();
-    if let Some(j) = joining {
-        let _ = j.signed_in.provider.revoke().await;
-    }
+    state.cloud.joining.lock().expect("lock").take();
     Ok(())
 }
 
@@ -645,4 +623,53 @@ pub async fn disconnect_drive(state: State<'_, AppState>) -> Result<CloudStatus,
             .map_err(|e| e.to_string())?;
     }
     Ok(status(&state, None))
+}
+
+#[cfg(test)]
+mod tests {
+    use memoir_core::vault::{self, KdfParams};
+
+    use super::*;
+
+    fn signed_in(cloud: &Cloud) -> SignedIn {
+        let config = DriveConfig::google(OAuthConfig::google("id", "secret"));
+        SignedIn {
+            provider: DriveProvider::new(config, Zeroizing::new("token".into())),
+            folders: Folders {
+                root: "root".into(),
+                objects: "objects".into(),
+                blobs: "blobs".into(),
+            },
+            account: "someone@example.com".into(),
+            refresh_token: Zeroizing::new("token".into()),
+            generation: cloud.generation(),
+        }
+    }
+
+    #[test]
+    fn a_workspace_switch_drops_the_sign_ins_from_before_it() {
+        let cloud = Cloud::default();
+        let fast = KdfParams {
+            m_kib: 64,
+            t: 1,
+            p: 1,
+        };
+        let vault = vault::create("correct horse battery", fast).unwrap().file;
+        let before = signed_in(&cloud);
+        *cloud.joining.lock().unwrap() = Some(Joining {
+            signed_in: signed_in(&cloud),
+            vault,
+        });
+        cloud.set(Some(signed_in(&cloud).provider));
+        assert!(cloud.current(&before));
+
+        cloud.reset();
+        assert!(!cloud.current(&before), "started before the switch");
+        assert!(
+            cloud.joining.lock().unwrap().is_none(),
+            "the old notebook's join"
+        );
+        assert!(cloud.provider().is_none(), "the old notebook's connection");
+        assert!(cloud.current(&signed_in(&cloud)), "started after it");
+    }
 }

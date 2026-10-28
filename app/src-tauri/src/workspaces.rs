@@ -19,7 +19,6 @@ use memoir_core::store::ObjectId;
 use memoir_core::vault::VaultFile;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime, State};
-use zeroize::Zeroizing;
 
 use crate::commands::AppState;
 use crate::session::{Session, Status, VAULT_FILE, delete_notebook_files, write_atomically};
@@ -222,9 +221,9 @@ impl Workspaces {
     /// and its keys in the keychain. Its notes in Google Drive stay.
     ///
     /// The files go first: if that fails, the workspace stays listed, with
-    /// its keys, and removing it can be tried again. Returns its Google
-    /// sign-in, if it had one, to be revoked.
-    fn remove(&self, id: &str) -> Result<Option<Zeroizing<String>>, String> {
+    /// its keys, and removing it can be tried again. Its Google sign-in is
+    /// forgotten, not revoked: other devices may use the same access.
+    fn remove(&self, id: &str) -> Result<(), String> {
         let _changing = self.changing.lock().expect("lock");
         {
             let list = self.list.lock().expect("lock");
@@ -248,17 +247,7 @@ impl Workspaces {
             })
         };
         deleted.map_err(|e| format!("could not remove the workspace's files: {e}"))?;
-        let mut token = None;
         if let Some(file) = vault {
-            token = match self.keychain.load_bytes(&cloud_account(&file.vault_id)) {
-                Ok(bytes) => {
-                    bytes.map(|b| Zeroizing::new(String::from_utf8_lossy(&b).into_owned()))
-                }
-                Err(e) => {
-                    log::warn!("could not read a removed workspace's Google sign-in: {e}");
-                    None
-                }
-            };
             for account in [
                 local_db_account(&file.vault_id),
                 cloud_account(&file.vault_id),
@@ -273,7 +262,7 @@ impl Workspaces {
             Ok(())
         })?;
         log::info!("workspace removed from this device");
-        Ok(token)
+        Ok(())
     }
 
     /// The workspace (other than `except`) whose notebook is `vault_id`.
@@ -360,20 +349,93 @@ pub fn rename_workspace(
 
 #[tauri::command(async)]
 pub fn remove_workspace(workspaces: State<'_, Workspaces>, id: String) -> Result<(), String> {
-    if let Some(token) = workspaces.remove(&id)? {
-        crate::cloud::revoke_token(token);
-    }
-    Ok(())
+    workspaces.remove(&id)
 }
 
 #[cfg(test)]
 mod tests {
     use memoir_core::keystore::MemoryStore;
+    use memoir_core::vault::{self, KdfParams};
 
     use super::*;
 
+    const FAST: KdfParams = KdfParams {
+        m_kib: 64,
+        t: 1,
+        p: 1,
+    };
+
     fn workspaces(root: &Path) -> Workspaces {
         Workspaces::load(root.to_owned(), Arc::new(MemoryStore::default()))
+    }
+
+    /// A notebook in `dir` (vault, database, an attachment) with its keys in
+    /// `keychain`; returns its vault id.
+    fn notebook(dir: &Path, keychain: &MemoryStore) -> String {
+        fs::create_dir_all(dir.join("blobs")).unwrap();
+        fs::write(dir.join("memoir.db"), b"x").unwrap();
+        fs::write(dir.join("blobs").join("a.mmr"), b"x").unwrap();
+        let file = vault::create("correct horse battery", FAST).unwrap().file;
+        fs::write(dir.join(VAULT_FILE), file.to_json()).unwrap();
+        for account in [
+            local_db_account(&file.vault_id),
+            cloud_account(&file.vault_id),
+        ] {
+            keychain.store_bytes(&account, b"secret").unwrap();
+        }
+        file.vault_id
+    }
+
+    fn has_keys(keychain: &MemoryStore, vault_id: &str) -> [bool; 2] {
+        [local_db_account(vault_id), cloud_account(vault_id)]
+            .map(|account| keychain.load_bytes(&account).unwrap().is_some())
+    }
+
+    #[test]
+    fn removing_a_workspace_forgets_its_keys() {
+        let root = tempfile::tempdir().unwrap();
+        let keychain = Arc::new(MemoryStore::default());
+        let w = Workspaces::load(root.path().to_owned(), keychain.clone());
+        let work = w.add("Work").unwrap();
+        let vault_id = notebook(&w.dir(&work), &keychain);
+        let mine = notebook(root.path(), &keychain);
+
+        w.remove(&work).unwrap();
+        assert!(!w.dir(&work).exists());
+        assert_eq!(has_keys(&keychain, &vault_id), [false, false]);
+        assert_eq!(
+            has_keys(&keychain, &mine),
+            [true, true],
+            "the other workspace's stay"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_removal_that_fails_can_be_tried_again() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let keychain = Arc::new(MemoryStore::default());
+        let w = Workspaces::load(root.path().to_owned(), keychain.clone());
+        let work = w.add("Work").unwrap();
+        let vault_id = notebook(&w.dir(&work), &keychain);
+        // The attachment can't be deleted.
+        let blobs = w.dir(&work).join("blobs");
+        fs::set_permissions(&blobs, fs::Permissions::from_mode(0o555)).unwrap();
+
+        assert!(w.remove(&work).is_err());
+        assert!(
+            w.list().workspaces.iter().any(|x| x.id == work),
+            "still listed"
+        );
+        assert!(w.dir(&work).join(VAULT_FILE).exists());
+        assert_eq!(has_keys(&keychain, &vault_id), [true, true]);
+
+        fs::set_permissions(&blobs, fs::Permissions::from_mode(0o755)).unwrap();
+        w.remove(&work).unwrap();
+        assert!(!w.dir(&work).exists());
+        assert_eq!(has_keys(&keychain, &vault_id), [false, false]);
     }
 
     #[test]
