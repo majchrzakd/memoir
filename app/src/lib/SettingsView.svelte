@@ -4,6 +4,7 @@
   import { isIOS } from './platform'
   import { localDate, sinceTime } from './time'
   import SecuritySettings from './SecuritySettings.svelte'
+  import WorkspaceSettings from './WorkspaceSettings.svelte'
   import Icon from './ui/Icon.svelte'
 
   let cloud = $state<CloudStatus | null>(null)
@@ -147,9 +148,16 @@
 <section class="settings">
   <h1>Settings</h1>
 
+  <WorkspaceSettings />
+
   <article class="card">
     <header>
-      <h2>Google Drive</h2>
+      <h2>
+        Google Drive
+        {#if app.workspaces.workspaces.length > 1}
+          <span class="workspace muted">· {app.workspaceName}</span>
+        {/if}
+      </h2>
       {#if cloud?.connected && !cloud.problem}
         <span class="badge ok"><Icon name="check" size={14} /> Connected</span>
       {/if}
@@ -356,6 +364,10 @@
 
   p {
     margin: 10px 0 0;
+  }
+
+  .workspace {
+    font-weight: normal;
   }
 
   .badge {

@@ -15,6 +15,11 @@ export const tauriApi: Api = {
   changePassphrase: (current, newPassphrase) =>
     invoke('change_passphrase', { current, newPassphrase }),
   newRecoveryKey: (passphrase) => invoke('new_recovery_key', { passphrase }),
+  workspaces: () => invoke('workspaces'),
+  switchWorkspace: (id) => invoke('switch_workspace', { id }),
+  addWorkspace: (name) => invoke('add_workspace', { name }),
+  renameWorkspace: (id, name) => invoke('rename_workspace', { id, name }),
+  removeWorkspace: (id) => invoke('remove_workspace', { id }),
   onFlushRequest: (handler) =>
     listen<number>('flush-editor', async (e) => {
       try {
@@ -39,6 +44,7 @@ export const tauriApi: Api = {
   saveNote: (id, title, body, base) =>
     invoke('save_note', { id, title, body, baseTitle: base.title, baseBody: base.body }),
   search: (query, limit) => invoke('search', { query, limit }),
+  backlinks: (id) => invoke('backlinks', { id }),
   noteHistory: (id) => invoke('note_history', { id }),
   restoreVersion: (id, savedAt) => invoke('restore_version', { id, savedAt }),
   setLater: (id, later, dueDate) => invoke('set_later', { id, later, dueDate }),

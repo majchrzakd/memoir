@@ -62,6 +62,27 @@ export interface SearchHit {
   reply_id: Id | null
 }
 
+/** A note that links to another one. */
+export interface Backlink {
+  id: Id
+  title: string
+}
+
+/** A separate notebook on this device (its own Google Drive, passphrase and notes). */
+export interface Workspace {
+  id: string
+  name: string
+}
+
+export interface WorkspaceList {
+  /** The open workspace. */
+  active: string
+  workspaces: Workspace[]
+}
+
+/** Scheme of links between notes in Markdown: `[text](note:<id>)`. */
+export const NOTE_LINK_SCHEME = 'note:'
+
 /** A reply in a note's thread (a note without a title). */
 export interface Reply {
   id: Id
@@ -102,6 +123,18 @@ export interface Api {
   changePassphrase(current: string, newPassphrase: string): Promise<void>
   /** Checks the passphrase; returns a new recovery key (the old one stops working). */
   newRecoveryKey(passphrase: string): Promise<string>
+  /** The workspaces on this device and which one is open. */
+  workspaces(): Promise<WorkspaceList>
+  /**
+   * Closes the open workspace (pushing its changes first) and opens another;
+   * returns its status. The UI saves the editor first.
+   */
+  switchWorkspace(id: string): Promise<Status>
+  /** Adds a workspace and opens it (at first run); returns its id. */
+  addWorkspace(name: string): Promise<string>
+  renameWorkspace(id: string, name: string): Promise<void>
+  /** Deletes a workspace that isn't open from this device; its Drive stays. */
+  removeWorkspace(id: string): Promise<void>
   /** Called when the app is closing; the handler must save pending edits. */
   onFlushRequest(handler: () => Promise<void>): Promise<() => void>
 
@@ -124,6 +157,8 @@ export interface Api {
    */
   saveNote(id: Id, title: string, body: string, base: NoteText): Promise<Note | null>
   search(query: string, limit: number): Promise<SearchHit[]>
+  /** Notes linking to this one (from their text or thread), by title. */
+  backlinks(id: Id): Promise<Backlink[]>
   /** Earlier versions kept on this device, newest first. */
   noteHistory(id: Id): Promise<HistoryEntry[]>
   /** Makes an earlier version current (the current text goes into history). */

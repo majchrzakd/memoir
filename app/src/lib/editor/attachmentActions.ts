@@ -1,5 +1,13 @@
 import { app, SYNCED_EVENT } from '../app.svelte'
 import { attachmentId } from './attachments'
+import { linkedNoteId } from './noteLinks'
+
+/** The note a link the event happened on points at, if any. */
+function noteLinkAt(event: Event): { id: string; link: HTMLAnchorElement } | null {
+  const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href^="note:"]')
+  const id = linkedNoteId(link?.getAttribute('href'))
+  return link && id ? { id, link } : null
+}
 
 /** The attachment (file link or image) an event happened on, if any. */
 function attachmentAt(event: Event): { id: string; name: string } | null {
@@ -15,11 +23,29 @@ function attachmentAt(event: Event): { id: string; name: string } | null {
 /**
  * Svelte action for an editor's container: double-click opens an
  * attachment, right-click offers Open / Save as. A single click only places
- * the cursor (and never follows the link).
+ * the cursor (and never follows the link). A click on a link to another
+ * note opens that note.
  */
 export function attachmentActions(node: HTMLElement) {
   const onclick = (e: MouseEvent) => {
     if (attachmentAt(e)) e.preventDefault()
+    const note = noteLinkAt(e)
+    if (note && e.button === 0) {
+      e.preventDefault()
+      e.stopPropagation()
+      void app.openLinkedNote(note.id)
+    }
+  }
+  // Says where a note link goes (or that the note is gone).
+  const onmouseover = (e: MouseEvent) => {
+    const note = noteLinkAt(e)
+    if (!note) return
+    const target = app.byId.get(note.id)
+    note.link.title =
+      target?.kind === 'note'
+        ? `Open “${target.title || 'Untitled'}”`
+        : 'The linked note was deleted or is in the trash'
+    note.link.classList.toggle('missing', target?.kind !== 'note')
   }
   const ondblclick = (e: MouseEvent) => {
     const found = attachmentAt(e)
@@ -58,6 +84,7 @@ export function attachmentActions(node: HTMLElement) {
     }
   }
   node.addEventListener('click', onclick, true)
+  node.addEventListener('mouseover', onmouseover)
   node.addEventListener('dblclick', ondblclick, true)
   node.addEventListener('contextmenu', oncontextmenu, true)
   node.addEventListener('error', onerror, true)
@@ -66,6 +93,7 @@ export function attachmentActions(node: HTMLElement) {
   return {
     destroy() {
       node.removeEventListener('click', onclick, true)
+      node.removeEventListener('mouseover', onmouseover)
       node.removeEventListener('dblclick', ondblclick, true)
       node.removeEventListener('contextmenu', oncontextmenu, true)
       node.removeEventListener('error', onerror, true)

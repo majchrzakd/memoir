@@ -384,7 +384,7 @@ fn io_error(e: memoir_core::keystore::KeystoreError) -> SessionError {
 
 /// Writes via a temporary file and rename, so a crash never leaves a
 /// half-written file behind.
-fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     {
         let mut f = fs::File::create(&tmp)?;

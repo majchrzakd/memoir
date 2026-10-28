@@ -7,6 +7,7 @@
 //!   tags and Later state; the note's replies appended at the end);
 //! - `attachments/` with every attached file, linked from the notes by
 //!   relative paths;
+//! - links between notes (`note:<id>`) as relative links to the `.md` files;
 //! - `Trash/` with whatever was in the trash.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -16,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use crate::blobs::{BlobError, BlobStore, is_valid_id};
-use crate::store::{Kind, ObjectId, Store, StoreError};
+use crate::store::{Kind, NOTE_LINK_SCHEME, ObjectId, Store, StoreError};
 use crate::sync::ObjectPayload;
 
 pub const ATTACHMENTS_DIR: &str = "attachments";
@@ -67,20 +68,28 @@ pub fn export_markdown(store: &Store, blobs: &BlobStore, out: &Path) -> Result<E
         out,
         attachment_names: HashMap::new(),
         used_attachment_names: HashSet::new(),
+        note_paths: HashMap::new(),
+        planning: true,
         summary: ExportSummary::default(),
     };
     let top: Vec<&ObjectPayload> = notebook.children(None);
     let (live, trashed): (Vec<_>, Vec<_>) = top.into_iter().partition(|p| p.trashed_at.is_none());
-    writer.write_items(&live, out, 0)?;
-
     // Trashed items anywhere in the tree go to Trash/ (with their contents).
     let mut in_trash: Vec<&ObjectPayload> = trashed;
     in_trash.extend(notebook.trashed_below_live());
-    if !in_trash.is_empty() {
-        let trash = out.join(TRASH_DIR);
-        fs::create_dir_all(&trash)?;
-        in_trash.sort_by(|a, b| (&a.title, a.id).cmp(&(&b.title, b.id)));
-        writer.write_items(&in_trash, &trash, 1)?;
+    in_trash.sort_by(|a, b| (&a.title, a.id).cmp(&(&b.title, b.id)));
+    let trash = out.join(TRASH_DIR);
+
+    // First every note's file name (for links between notes), then the files.
+    for planning in [true, false] {
+        writer.planning = planning;
+        writer.write_items(&live, out, 0)?;
+        if !in_trash.is_empty() {
+            if !planning {
+                fs::create_dir_all(&trash)?;
+            }
+            writer.write_items(&in_trash, &trash, 1)?;
+        }
     }
     Ok(writer.summary)
 }
@@ -168,6 +177,10 @@ struct Writer<'a> {
     /// Blob id → file name in `attachments/` (None: missing).
     attachment_names: HashMap<String, Option<String>>,
     used_attachment_names: HashSet<String>,
+    /// Note id → its file, relative to `out`.
+    note_paths: HashMap<ObjectId, PathBuf>,
+    /// Only choosing file names (`note_paths`), nothing is written.
+    planning: bool,
     summary: ExportSummary,
 }
 
@@ -190,14 +203,21 @@ impl Writer<'_> {
                 Kind::Folder => {
                     let name = names.take(&file_name(&item.title, "Untitled folder"));
                     let path = dir.join(&name);
-                    fs::create_dir_all(&path)?;
-                    self.summary.folders += 1;
+                    if !self.planning {
+                        fs::create_dir_all(&path)?;
+                        self.summary.folders += 1;
+                    }
                     let children = self.notebook.children(Some(item.id));
                     self.write_items(&children, &path, depth + 1)?;
                 }
                 Kind::Note => {
                     let name = names.take(&format!("{}.md", file_name(&item.title, "Untitled")));
                     let path = dir.join(&name);
+                    if self.planning {
+                        let relative = path.strip_prefix(self.out).unwrap_or(&path).to_owned();
+                        self.note_paths.insert(item.id, relative);
+                        continue;
+                    }
                     let text = self.note_text(item, depth)?;
                     write_file(&path, text.as_bytes(), item.updated_at)?;
                     self.summary.notes += 1;
@@ -274,7 +294,37 @@ impl Writer<'_> {
             rest = &rest[i + SCHEME.len() + id.len()..];
         }
         out.push_str(rest);
-        Ok(out)
+        Ok(self.with_note_links(&out, depth))
+    }
+
+    /// `note:<id>` links pointing at the exported notes' files. Links to
+    /// notes that are gone are left as they were.
+    fn with_note_links(&self, body: &str, depth: usize) -> String {
+        let up = "../".repeat(depth);
+        let mut out = String::with_capacity(body.len());
+        let mut rest = body;
+        while let Some(i) = rest.find(NOTE_LINK_SCHEME) {
+            out.push_str(&rest[..i]);
+            let after = &rest[i + NOTE_LINK_SCHEME.len()..];
+            let id = after.get(..26).and_then(|id| id.parse::<ObjectId>().ok());
+            match id.and_then(|id| self.note_paths.get(&id)) {
+                Some(path) if out.ends_with("](") => {
+                    out.push_str(&up);
+                    let parts: Vec<String> = path
+                        .iter()
+                        .map(|part| percent_encode(&part.to_string_lossy()))
+                        .collect();
+                    out.push_str(&parts.join("/"));
+                    rest = &after[26..];
+                }
+                _ => {
+                    out.push_str(NOTE_LINK_SCHEME);
+                    rest = after;
+                }
+            }
+        }
+        out.push_str(rest);
+        out
     }
 
     /// Writes an attachment (once) and returns its file name, or None if
@@ -542,6 +592,17 @@ mod tests {
             .create_note(Placement::last_in(None), "Old", "bye")
             .unwrap();
         s.move_to_trash(&gone).unwrap();
+        let linking = s
+            .create_note(
+                Placement::last_in(None),
+                "Linking",
+                &format!(
+                    "[plan](note:{note}) [old](note:{gone}) [gone](note:00000000000000000000000000)"
+                ),
+            )
+            .unwrap();
+        s.save_note(&gone, "Old", &format!("bye [back](note:{linking})"))
+            .unwrap();
         let missing = "a".repeat(64);
         s.create_note(
             Placement::last_in(None),
@@ -556,7 +617,7 @@ mod tests {
             summary,
             ExportSummary {
                 folders: 1,
-                notes: 4,
+                notes: 5,
                 attachments: 1,
                 missing_attachments: 1
             }
@@ -576,6 +637,12 @@ mod tests {
         assert!(read(&out.join("Trash").join("Old.md")).contains("trashed: "));
         assert!(read(&out.join("Untitled.md")).contains(&format!("attachment:{missing}")));
         let _ = other;
+        // Links between notes point at the files, also from and into the trash.
+        let linking = read(&out.join("Linking.md"));
+        assert!(linking.contains("[plan](Work/Plan_%20Q4_.md)"), "{linking}");
+        assert!(linking.contains("[old](Trash/Old.md)"));
+        assert!(linking.contains("[gone](note:00000000000000000000000000)"));
+        assert!(read(&out.join("Trash").join("Old.md")).contains("[back](../Linking.md)"));
 
         // Only into an empty folder.
         assert!(matches!(

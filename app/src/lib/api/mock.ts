@@ -76,6 +76,56 @@ export function createMockApi(): Api {
     param === 'first_run' ? 'first_run' : param === 'locked' ? 'locked' : 'unlocked'
   if (status !== 'first_run') seed()
 
+  // Workspaces: each has its own notes, swapped in when it's opened.
+  const workspaces = [
+    { id: 'default', name: 'Personal' },
+    { id: 'work', name: 'Work' },
+  ]
+  let activeWorkspace = 'default'
+  const stashed = new Map<string, { objects: Obj[]; status: Status }>()
+  {
+    const roadmap = newId()
+    const t = now()
+    const note = (id: Id, title: string, body: string): Obj => ({
+      id,
+      kind: 'note',
+      parent_id: null,
+      title,
+      order: 0,
+      body,
+      tags: [],
+      created_at: t,
+      updated_at: t,
+      trashed_at: null,
+      later_at: null,
+      due_date: null,
+    })
+    stashed.set('work', {
+      status: 'unlocked',
+      objects: [
+        note(roadmap, 'Roadmap', '- Q1: launch\n- Q2: grow'),
+        {
+          ...note(newId(), 'Standup', `Agreed to follow the [roadmap](note:${roadmap}).`),
+          order: 1,
+        },
+      ],
+    })
+  }
+
+  function openWorkspace(id: string) {
+    stashed.set(activeWorkspace, {
+      objects: [...objects.values()],
+      status: status === 'confirm_recovery_key' ? 'first_run' : status,
+    })
+    objects.clear()
+    const next = stashed.get(id)
+    for (const o of next?.objects ?? []) objects.set(o.id, o)
+    status = next?.status ?? 'first_run'
+    activeWorkspace = id
+    cloud.connected = false
+    cloud.account = null
+  }
+
   function get(id: Id): Obj {
     const o = objects.get(id)
     if (!o) throw `item ${id} not found`
@@ -194,8 +244,13 @@ export function createMockApi(): Api {
       'Reading list',
       '- [x] Dune\n- [ ] The Rust Programming Language\n- [ ] Solaris',
     )
-    create('note', last(work), 'Meeting notes', MEETING)
-    create('note', last(null), 'Welcome to Memoir', WELCOME)
+    const meetingId = create('note', last(work), 'Meeting notes', MEETING)
+    create(
+      'note',
+      last(null),
+      'Welcome to Memoir',
+      `${WELCOME}\nLinks between notes look like this: [Meeting notes](note:${meetingId}).\n`,
+    )
     for (let i = 1; i <= 40; i++) {
       create('note', last(work), `Daily log ${i}`, `Worked on item ${i}. Next: item ${i + 1}.`)
     }
@@ -256,6 +311,35 @@ export function createMockApi(): Api {
   const api: Api = {
     async status() {
       return status
+    },
+    async workspaces() {
+      return { active: activeWorkspace, workspaces: workspaces.map((w) => ({ ...w })) }
+    },
+    async switchWorkspace(id) {
+      if (!workspaces.some((w) => w.id === id)) throw 'no such workspace'
+      if (id !== activeWorkspace) openWorkspace(id)
+      return status
+    },
+    async addWorkspace(name) {
+      if (!name.trim()) throw 'give the workspace a name'
+      const id = newId().toLowerCase()
+      workspaces.push({ id, name: name.trim() })
+      openWorkspace(id)
+      return id
+    },
+    async renameWorkspace(id, name) {
+      if (!name.trim()) throw 'give the workspace a name'
+      const w = workspaces.find((w) => w.id === id)
+      if (!w) throw 'no such workspace'
+      w.name = name.trim()
+    },
+    async removeWorkspace(id) {
+      if (id === activeWorkspace) throw 'switch to another workspace first'
+      workspaces.splice(
+        workspaces.findIndex((w) => w.id === id),
+        1,
+      )
+      stashed.delete(id)
     },
     async beginSetup(passphrase) {
       if ([...passphrase].length < 8) throw 'the passphrase must be at least 8 characters'
@@ -392,6 +476,18 @@ export function createMockApi(): Api {
       const o = get(id)
       history.get(id)?.unshift({ saved_at: o.updated_at, title: o.title, body: o.body })
       Object.assign(o, { title: version.title, body: version.body, updated_at: now() })
+    },
+    async backlinks(id) {
+      const needle = `](note:${id})`
+      const found = new Map<Id, string>()
+      for (const o of objects.values()) {
+        if (o.kind !== 'note' || hidden(o) || !o.body.includes(needle)) continue
+        const note = isReply(o) ? get(o.parent_id!) : o
+        if (note.id !== id && !hidden(note)) found.set(note.id, note.title)
+      }
+      return [...found]
+        .map(([id, title]) => ({ id, title }))
+        .sort((a, b) => a.title.localeCompare(b.title))
     },
     async search(query, limit) {
       const words = fold(query).split(/\s+/).filter(Boolean)

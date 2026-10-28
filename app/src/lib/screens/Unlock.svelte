@@ -12,6 +12,8 @@
   let remember = $state(true)
   let busy = $state(false)
   let error = $state<string | null>(null)
+  /** With several workspaces, say which one is being unlocked. */
+  const unlockName = $derived(app.workspaces.workspaces.length > 1 ? app.workspaceName : 'Memoir')
 
   async function submit(e: SubmitEvent) {
     e.preventDefault()
@@ -38,8 +40,26 @@
   <form class="card" onsubmit={submit}>
     <div class="title">
       <Icon name="lock" size={22} />
-      <h1>{mode === 'passphrase' ? 'Unlock Memoir' : 'Use your recovery key'}</h1>
+      <h1>{mode === 'passphrase' ? `Unlock ${unlockName}` : 'Use your recovery key'}</h1>
     </div>
+
+    {#if app.workspaces.workspaces.length > 1}
+      <label>
+        Workspace
+        <select
+          value={app.workspaces.active}
+          disabled={busy}
+          onchange={(e) => {
+            error = null
+            void app.switchWorkspace(e.currentTarget.value)
+          }}
+        >
+          {#each app.workspaces.workspaces as w (w.id)}
+            <option value={w.id}>{w.name}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
 
     {#if mode === 'passphrase'}
       <label>
@@ -133,6 +153,15 @@
     flex-direction: column;
     gap: 4px;
     font-weight: 500;
+  }
+
+  select {
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: inherit;
+    font: inherit;
   }
 
   .check {

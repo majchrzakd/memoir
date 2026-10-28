@@ -38,6 +38,8 @@ const samples: Record<string, string> = {
   table: '| Name | Qty |\n| --- | --- |\n| Apples | 3 |\n| Pears | 5 |',
   image: '![A cat](https://example.com/cat.png "Cat")',
   horizontalRule: 'above\n\n---\n\nbelow',
+  noteLink:
+    'See [the plan](note:01JB7Q2M3N4P5R6S7T8V9W0XYZ) and [**bold** one](note:01JB7Q2M3N4P5R6S7T8V9W0XY0).',
   hardBreak: 'line one  \nline two',
   escaping: 'Literal \\*stars\\*, \\_underscores\\_, \\# hash, \\[brackets\\] and a | pipe.',
   unicode: 'Zażółć gęślą jaźń — 日本語 — 🙂',

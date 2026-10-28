@@ -21,6 +21,7 @@ use tokio::sync::Notify;
 use zeroize::Zeroizing;
 
 use crate::commands::AppState;
+use crate::workspaces::Workspaces;
 
 const VAULT_FILE: &str = "vault.json";
 
@@ -80,6 +81,14 @@ impl Cloud {
     /// The connected provider, if any.
     pub fn provider(&self) -> Option<Arc<DriveProvider>> {
         self.provider.read().expect("lock").clone()
+    }
+
+    /// Another notebook was opened (workspace switch): drops this one's
+    /// connection and any sign-in in progress.
+    pub fn reset(&self) {
+        self.cancel.notify_waiters();
+        self.set(None);
+        self.joining.lock().expect("lock").take();
     }
 
     fn set(&self, provider: Option<DriveProvider>) {
@@ -426,7 +435,18 @@ pub async fn find_drive_notebook<R: Runtime>(
     let result = async {
         let signed_in = sign_in(&app, &state, config).await?;
         match remote_vault(&signed_in.provider).await? {
-            Some(vault) => Ok(Joining { signed_in, vault }),
+            Some(vault) => {
+                let workspaces = app.state::<Workspaces>();
+                if let Some(other) = workspaces.holding(&vault.vault_id, &workspaces.active()) {
+                    let _ = signed_in.provider.revoke().await;
+                    return Err(format!(
+                        "The notebook in the Google Drive of {} is already on this device, in the \
+                         workspace \"{}\".",
+                        signed_in.account, other.name
+                    ));
+                }
+                Ok(Joining { signed_in, vault })
+            }
             None => {
                 let account = signed_in.account.clone();
                 let _ = signed_in.provider.revoke().await;

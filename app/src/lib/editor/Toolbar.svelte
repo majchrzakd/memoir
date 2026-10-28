@@ -164,6 +164,15 @@
   <div class="group">
     <button
       class="tool"
+      title="Link to another note (or type [[)"
+      aria-label="Link to another note"
+      onmousedown={(e) => e.preventDefault()}
+      onclick={() => (app.linkingEditor = editor)}
+    >
+      <Icon name="link" />
+    </button>
+    <button
+      class="tool"
       title="Attach a file or image (or paste / drop it into the note)"
       aria-label="Attach a file or image"
       onmousedown={(e) => e.preventDefault()}
