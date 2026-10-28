@@ -13,12 +13,22 @@
   $effect(() => {
     const id = noteId
     void app.syncVersion
+    let current = true
     api
       .backlinks(id)
       .then((found) => {
-        if (id === noteId) links = found
+        if (current) links = found
       })
-      .catch(() => (links = []))
+      .catch(() => {
+        if (current) links = []
+      })
+    return () => (current = false)
+  })
+
+  // Another note's list never shows while this one's loads.
+  $effect.pre(() => {
+    void noteId
+    links = []
   })
 </script>
 

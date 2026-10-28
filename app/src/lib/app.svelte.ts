@@ -32,6 +32,7 @@ const FIRST_WORKSPACE = 'default'
 function workspaceKey(key: string, workspace: string): string {
   return workspace === FIRST_WORKSPACE ? key : `${key}/${workspace}`
 }
+const WORKSPACE_KEYS = [EXPANDED_KEY, OPEN_NOTE_KEY]
 const THREAD_LAYOUT_KEY = 'memoir.threadLayout'
 
 function load<T>(key: string, fallback: T): T {
@@ -48,6 +49,15 @@ function persist(key: string, value: unknown) {
     localStorage.setItem(key, JSON.stringify(value))
   } catch {
     // UI preferences only; losing them is harmless.
+  }
+}
+
+/** Drops a removed workspace's preferences. */
+function forgetWorkspace(workspace: string) {
+  try {
+    for (const key of WORKSPACE_KEYS) localStorage.removeItem(workspaceKey(key, workspace))
+  } catch {
+    // As above.
   }
 }
 
@@ -228,13 +238,13 @@ class App {
   /** Saves and closes the open workspace, then opens `id`. */
   async switchWorkspace(id: string) {
     if (id === this.workspaces.active || this.screen === 'loading') return
-    await this.flushEditor().catch(() => {})
+    if (!(await this.saved())) return
     await this.openWorkspace(() => api.switchWorkspace(id))
   }
 
   /** Adds a workspace and shows its first-run screen (new notebook or one from Drive). */
   async addWorkspace(name: string) {
-    await this.flushEditor().catch(() => {})
+    if (this.screen === 'loading' || !(await this.saved())) return
     const previous = this.workspaces.active
     await this.openWorkspace(async () => {
       await api.addWorkspace(name)
@@ -251,8 +261,7 @@ class App {
     if (!back) return
     this.previousWorkspace = null
     await this.openWorkspace(() => api.switchWorkspace(back))
-    await api.removeWorkspace(abandoned).catch((e) => this.fail(e))
-    this.workspaces = await api.workspaces()
+    await this.removeWorkspace(abandoned)
   }
 
   async renameWorkspace(id: string, name: string) {
@@ -267,9 +276,21 @@ class App {
   async removeWorkspace(id: string) {
     try {
       await api.removeWorkspace(id)
+      forgetWorkspace(id)
       this.workspaces = await api.workspaces()
     } catch (e) {
       this.fail(e)
+    }
+  }
+
+  /** Saves the open note before its notebook closes; false (error shown) if that failed. */
+  private async saved(): Promise<boolean> {
+    try {
+      await this.flushEditor()
+      return true
+    } catch (e) {
+      this.fail(e)
+      return false
     }
   }
 

@@ -7,7 +7,7 @@
 //! at build time or (for development) at run time. iOS uses its own client
 //! (`IOS_CLIENT_ID`), which comes back to the app through its URL scheme.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use memoir_core::remote::{Area, ProviderError, RemoteFile, StorageProvider};
@@ -24,6 +24,7 @@ use crate::commands::AppState;
 use crate::workspaces::Workspaces;
 
 const VAULT_FILE: &str = "vault.json";
+const SWITCHED: &str = "Another workspace was opened meanwhile.";
 
 /// The Google OAuth client for iOS (type "iOS", bundle ID
 /// `com.memoir.notebook`). Not a secret: it ships in every copy of the app,
@@ -47,6 +48,9 @@ pub struct Cloud {
     connecting: AtomicBool,
     /// Signed in on a new device, notebook found, waiting for the passphrase.
     joining: Mutex<Option<Joining>>,
+    /// Workspace switches so far. A sign-in belongs to the notebook that was
+    /// open when it started; one that ends after a switch is dropped.
+    generation: AtomicU64,
     /// iOS: where to pass the URL Google's sign-in redirects back to.
     #[cfg(target_os = "ios")]
     redirect: Mutex<Option<tokio::sync::oneshot::Sender<String>>>,
@@ -58,6 +62,17 @@ struct SignedIn {
     folders: Folders,
     account: String,
     refresh_token: Zeroizing<String>,
+    /// [`Cloud::generation`] when the sign-in started.
+    generation: u64,
+}
+
+impl SignedIn {
+    /// Gives up on this sign-in: Memoir's access is revoked in the background.
+    fn revoke_later(self) {
+        tauri::async_runtime::spawn(async move {
+            let _ = self.provider.revoke().await;
+        });
+    }
 }
 
 struct Joining {
@@ -86,9 +101,22 @@ impl Cloud {
     /// Another notebook was opened (workspace switch): drops this one's
     /// connection and any sign-in in progress.
     pub fn reset(&self) {
+        // First, so a sign-in finishing meanwhile sees it (see `find_drive_notebook`).
+        self.generation.fetch_add(1, Ordering::SeqCst);
         self.cancel.notify_waiters();
         self.set(None);
-        self.joining.lock().expect("lock").take();
+        if let Some(joining) = self.joining.lock().expect("lock").take() {
+            joining.signed_in.revoke_later();
+        }
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    /// Whether `signed_in` started in the notebook that's open now.
+    fn current(&self, signed_in: &SignedIn) -> bool {
+        signed_in.generation == self.generation()
     }
 
     fn set(&self, provider: Option<DriveProvider>) {
@@ -240,6 +268,7 @@ async fn sign_in<R: Runtime>(
     state: &AppState,
     config: OAuthConfig,
 ) -> Result<SignedIn, String> {
+    let generation = state.cloud.generation();
     let http = reqwest::Client::new();
     let open_browser = |url: &str| {
         app.opener()
@@ -275,6 +304,7 @@ async fn sign_in<R: Runtime>(
         folders,
         account: account.email,
         refresh_token: Zeroizing::new(sign_in.refresh_token.to_string()),
+        generation,
     })
 }
 
@@ -370,6 +400,12 @@ async fn reconcile_vault(state: &AppState, provider: &DriveProvider) -> Result<(
 fn remember(state: &AppState, signed_in: SignedIn) -> Result<(), String> {
     {
         let mut session = state.session()?;
+        // The session is replaced only after `Cloud::reset`, and not while
+        // this lock is held.
+        if !state.cloud.current(&signed_in) {
+            signed_in.revoke_later();
+            return Err(SWITCHED.into());
+        }
         session
             .set_cloud_token(&signed_in.refresh_token)
             .map_err(|e| e.to_string())?;
@@ -461,7 +497,13 @@ pub async fn find_drive_notebook<R: Runtime>(
     state.cloud.connecting.store(false, Ordering::SeqCst);
     let joining = result?;
     let account = joining.signed_in.account.clone();
-    *state.cloud.joining.lock().expect("lock") = Some(joining);
+    let mut waiting = state.cloud.joining.lock().expect("lock");
+    // `Cloud::reset` counts the switch before taking what's waiting here.
+    if !state.cloud.current(&joining.signed_in) {
+        joining.signed_in.revoke_later();
+        return Err(SWITCHED.into());
+    }
+    *waiting = Some(joining);
     Ok(account)
 }
 
@@ -483,12 +525,16 @@ pub async fn open_drive_notebook<R: Runtime>(
         .ok_or("sign in to Google first")?;
     // Unlocking takes a moment (key derivation); keep it off the async threads.
     let vault = joining.vault.clone();
+    let generation = joining.signed_in.generation;
     let passphrase = Zeroizing::new(passphrase);
     let handle = app.clone();
     let joined = tauri::async_runtime::spawn_blocking(move || {
-        handle
-            .state::<AppState>()
-            .session()?
+        let state = handle.state::<AppState>();
+        let mut session = state.session()?;
+        if state.cloud.generation() != generation {
+            return Err(SWITCHED.to_string());
+        }
+        session
             .join(&vault, &passphrase, remember_key)
             .map_err(|e| e.to_string())
     })
@@ -496,7 +542,12 @@ pub async fn open_drive_notebook<R: Runtime>(
     .map_err(|e| e.to_string())?;
     if let Err(e) = joined {
         // Wrong passphrase: keep the sign-in for another try.
-        *state.cloud.joining.lock().expect("lock") = Some(joining);
+        let mut waiting = state.cloud.joining.lock().expect("lock");
+        if state.cloud.current(&joining.signed_in) {
+            *waiting = Some(joining);
+        } else {
+            joining.signed_in.revoke_later();
+        }
         return Err(e);
     }
     remember(&state, joining.signed_in)?;

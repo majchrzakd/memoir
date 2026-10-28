@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::commands::AppState;
-use crate::session::{Session, Status, write_atomically};
+use crate::session::{Session, Status, VAULT_FILE, delete_notebook_files, write_atomically};
 
 const LIST_FILE: &str = "workspaces.json";
 const DIR: &str = "workspaces";
@@ -44,6 +44,63 @@ struct ListFile {
     workspaces: Vec<Workspace>,
 }
 
+impl ListFile {
+    /// The workspaces in the data folder, for when the list is missing or
+    /// unreadable: the first one and every folder in `workspaces/`. Their
+    /// names are lost (they can be renamed).
+    fn found_in(root: &Path) -> Self {
+        let mut ids: Vec<String> = fs::read_dir(root.join(DIR))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|id| id != FIRST && valid_id(id))
+            .collect();
+        ids.sort(); // ULIDs: in the order they were added
+        let mut workspaces = vec![Workspace {
+            id: FIRST.into(),
+            name: FIRST_NAME.into(),
+        }];
+        for (i, id) in ids.into_iter().enumerate() {
+            workspaces.push(Workspace {
+                id,
+                name: format!("Workspace {}", i + 2),
+            });
+        }
+        Self {
+            active: FIRST.into(),
+            workspaces,
+        }
+    }
+
+    /// Only well-formed ids, each once; the open one is one of them.
+    fn checked(mut self) -> Self {
+        let mut seen = std::collections::HashSet::new();
+        self.workspaces
+            .retain(|w| valid_id(&w.id) && seen.insert(w.id.clone()));
+        if self.workspaces.is_empty() {
+            self.workspaces.push(Workspace {
+                id: FIRST.into(),
+                name: FIRST_NAME.into(),
+            });
+        }
+        if !self.workspaces.iter().any(|w| w.id == self.active) {
+            self.active = self.workspaces[0].id.clone();
+        }
+        self
+    }
+}
+
+/// `default`, or a lowercase ULID (see [`Workspaces::add`]): never a path.
+fn valid_id(id: &str) -> bool {
+    id == FIRST
+        || (id.len() == 26
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase()))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceList {
     pub active: String,
@@ -58,21 +115,24 @@ pub struct Workspaces {
 
 impl Workspaces {
     pub fn load(root: PathBuf, keychain: Arc<dyn SecretStore>) -> Self {
-        let list = fs::read_to_string(root.join(LIST_FILE))
-            .ok()
-            .and_then(|json| serde_json::from_str::<ListFile>(&json).ok())
-            .filter(|l| l.workspaces.iter().any(|w| w.id == l.active))
-            .unwrap_or_else(|| ListFile {
-                active: FIRST.into(),
-                workspaces: vec![Workspace {
-                    id: FIRST.into(),
-                    name: FIRST_NAME.into(),
-                }],
-            });
+        let list = match fs::read_to_string(root.join(LIST_FILE)) {
+            Ok(json) => serde_json::from_str::<ListFile>(&json).unwrap_or_else(|e| {
+                log::warn!("the workspace list can't be read ({e}); finding the workspaces again");
+                ListFile::found_in(&root)
+            }),
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!(
+                        "the workspace list can't be read ({e}); finding the workspaces again"
+                    );
+                }
+                ListFile::found_in(&root)
+            }
+        };
         Self {
             root,
             keychain,
-            list: std::sync::Mutex::new(list),
+            list: std::sync::Mutex::new(list.checked()),
         }
     }
 
@@ -155,16 +215,33 @@ impl Workspaces {
 
     /// Removes a workspace that isn't open, with its data on this device
     /// and its keys in the keychain. Its notes in Google Drive stay.
+    ///
+    /// The files go first: if that fails, the workspace stays listed, with
+    /// its keys, and removing it can be tried again.
     fn remove(&self, id: &str) -> Result<(), String> {
-        if id == self.active() {
-            return Err("switch to another workspace first".into());
+        {
+            let list = self.list.lock().expect("lock");
+            if !list.workspaces.iter().any(|w| w.id == id) {
+                return Err("no such workspace".into());
+            }
+            if id == list.active {
+                return Err("switch to another workspace first".into());
+            }
         }
         let dir = self.dir(id);
-        self.update(|list| {
-            list.workspaces.retain(|w| w.id != id);
-            Ok(())
-        })?;
-        if let Some(file) = vault_in(&dir) {
+        let vault = vault_in(&dir);
+        let deleted = if id == FIRST {
+            // The data folder itself: only the notebook's files, not the
+            // other workspaces, the list or the logs.
+            delete_notebook_files(&dir)
+        } else {
+            delete_notebook_files(&dir).and_then(|()| match fs::remove_dir_all(&dir) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                other => other,
+            })
+        };
+        deleted.map_err(|e| format!("could not remove the workspace's files: {e}"))?;
+        if let Some(file) = vault {
             for account in [
                 local_db_account(&file.vault_id),
                 cloud_account(&file.vault_id),
@@ -174,18 +251,10 @@ impl Workspaces {
                 }
             }
         }
-        if id == FIRST {
-            // The data folder itself: only the notebook's files, not the
-            // other workspaces, the list or the logs.
-            for name in ["vault.json", "memoir.db", "memoir.db-wal", "memoir.db-shm"] {
-                remove_if_exists(&dir.join(name), false)?;
-            }
-            for name in ["blobs", "opened"] {
-                remove_if_exists(&dir.join(name), true)?;
-            }
-        } else {
-            remove_if_exists(&dir, true)?;
-        }
+        self.update(|list| {
+            list.workspaces.retain(|w| w.id != id);
+            Ok(())
+        })?;
         log::info!("workspace removed from this device");
         Ok(())
     }
@@ -208,20 +277,7 @@ fn clean_name(name: &str) -> Result<String, String> {
 }
 
 fn vault_in(dir: &Path) -> Option<VaultFile> {
-    VaultFile::from_json(&fs::read_to_string(dir.join("vault.json")).ok()?).ok()
-}
-
-fn remove_if_exists(path: &Path, dir: bool) -> Result<(), String> {
-    let result = if dir {
-        fs::remove_dir_all(path)
-    } else {
-        fs::remove_file(path)
-    };
-    match result {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("could not remove the workspace's files: {e}")),
-    }
+    VaultFile::from_json(&fs::read_to_string(dir.join(VAULT_FILE)).ok()?).ok()
 }
 
 /// Closes the open workspace and opens `id`. The UI saved the editor
@@ -338,6 +394,55 @@ mod tests {
         assert!(!w.dir(&work).exists());
         assert_eq!(workspaces(root.path()).list().workspaces.len(), 1);
         assert!(w.set_active(&work).is_err());
+    }
+
+    #[test]
+    fn only_listed_workspaces_can_be_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let w = workspaces(root.path());
+        let work = w.add("Work").unwrap();
+        fs::create_dir_all(w.dir(&work)).unwrap();
+        fs::write(root.path().join("memoir.db"), b"x").unwrap();
+        for id in ["..", "../..", "00000000000000000000000000", ""] {
+            assert!(w.remove(id).is_err(), "{id:?}");
+        }
+        assert!(root.path().join("memoir.db").exists());
+        assert!(w.dir(&work).exists());
+    }
+
+    #[test]
+    fn a_damaged_list_keeps_the_workspaces() {
+        let root = tempfile::tempdir().unwrap();
+        let w = workspaces(root.path());
+        let work = w.add("Work").unwrap();
+        fs::create_dir_all(w.dir(&work)).unwrap();
+
+        // The open one missing from the list: the list stays.
+        let list = format!(
+            r#"{{"active":"gone","workspaces":[{{"id":"default","name":"A"}},{{"id":"{work}","name":"Work"}},{{"id":"..","name":"Bad"}}]}}"#
+        );
+        fs::write(root.path().join(LIST_FILE), list).unwrap();
+        let list = workspaces(root.path()).list();
+        assert_eq!(list.active, FIRST);
+        assert_eq!(
+            list.workspaces
+                .iter()
+                .map(|w| w.id.as_str())
+                .collect::<Vec<_>>(),
+            [FIRST, work.as_str()]
+        );
+
+        // Unreadable: found again from the folders.
+        fs::write(root.path().join(LIST_FILE), b"{ not json").unwrap();
+        let list = workspaces(root.path()).list();
+        assert_eq!(list.active, FIRST);
+        assert_eq!(
+            list.workspaces
+                .iter()
+                .map(|w| w.id.as_str())
+                .collect::<Vec<_>>(),
+            [FIRST, work.as_str()]
+        );
     }
 
     #[test]
