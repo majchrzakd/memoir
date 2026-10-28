@@ -60,6 +60,13 @@ body {
   :root {
     font-size: 16px;
   }
+
+  /* Text fields set smaller sizes of their own (the note editors: 14–15px). */
+  input,
+  textarea,
+  [contenteditable='true'] {
+    font-size: 16px !important;
+  }
 }
 
 button,

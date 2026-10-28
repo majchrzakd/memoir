@@ -59,7 +59,7 @@ fn pick_folder<R: Runtime>(app: &AppHandle<R>) -> Result<Option<PathBuf>, String
 /// (M10).
 #[cfg(mobile)]
 fn pick_folder<R: Runtime>(_app: &AppHandle<R>) -> Result<Option<PathBuf>, String> {
-    Err("Export isn't available on iPhone yet.".into())
+    Err("Export isn't available on iPhone or iPad yet.".into())
 }
 
 /// Opens the file manager at an export.

@@ -53,6 +53,10 @@
   />
 {/if}
 
+{#if app.covered}
+  <div class="cover"></div>
+{/if}
+
 {#if app.error}
   <div class="toast" role="alert">
     <span>{app.error}</span>
@@ -61,6 +65,13 @@
 {/if}
 
 <style>
+  .cover {
+    position: fixed;
+    inset: 0;
+    z-index: 300;
+    background: var(--bg);
+  }
+
   .toast {
     position: fixed;
     left: 50%;
