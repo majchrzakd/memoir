@@ -44,7 +44,9 @@ local database key     HKDF(MK, info = "memoir/v1/local-db")
   "recovery": {
     "kdf": "hkdf-sha256",
     "wrapped_key": "<b64>"
-  }
+  },
+  "updated_at": 1793216558257,
+  "mac": "<b64>"
 }
 ```
 
@@ -64,6 +66,17 @@ local database key     HKDF(MK, info = "memoir/v1/local-db")
 
 Readers must reject parameters outside: `m_kib` ≤ 1 048 576, 1 ≤ `t` ≤ 16,
 1 ≤ `p` ≤ 8.
+
+**Changes across devices** (`updated_at`, `mac`; optional, absent in files
+from before they existed)
+- `updated_at`: when the passphrase or recovery key last changed, unix ms.
+- `mac` = b64( HMAC-SHA256(key = HKDF(MK, info = `"memoir/v1/vault-mac"`),
+  data = the file serialized as compact JSON without `mac`, fields in the
+  order shown above) ).
+- A device holding MK replaces its `vault.json` with another copy only if
+  that copy has the same `vault_id` and `key_epoch`, a valid `mac`, and a
+  larger `updated_at`. A copy planted or rolled back by anyone without MK is
+  ignored. Readers that only unlock may ignore both fields.
 
 ### Recovery key text
 Crockford base32 (alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`) of

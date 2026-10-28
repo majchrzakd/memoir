@@ -55,6 +55,7 @@ this choice is low-risk and reversible.
 │   store   — SQLCipher DB: tree, notes, FTS5, outbox         │
 │   sync    — revision DAG, push/pull, merge, GC              │
 │   export  — decrypted Markdown export                       │
+│   import  — Evernote (.enex) import                         │
 ├─────────────────────────────────────────────────────────────┤
 │ memoir-gdrive — StorageProvider impl (OAuth PKCE, REST v3)  │
 │ memoir-cli    — offline recovery/export tool                │
@@ -148,6 +149,25 @@ names, structure, content, tags, attachment types. Accepted trade-off.
 The local DB is **SQLCipher** (encrypted SQLite); local blob cache is stored
 encrypted in the same envelope format. A stolen laptop disk reveals nothing
 without the keychain entry / passphrase.
+
+### Locking, passphrase and recovery key changes
+- **Lock** (sidebar button, Ctrl/⌘+L, Mac menu, or automatically after N idle
+  minutes, Settings → Security): the database closes and the keys leave
+  memory (`Session::lock`); decrypted copies of opened attachments are
+  deleted; the UI drops what it showed. Unlocking needs the passphrase or
+  recovery key, even on a device that remembers the key — that only skips
+  the passphrase when Memoir starts.
+- **Change passphrase / new recovery key** (Settings → Security, both after
+  checking the current passphrase) re-wrap the master key, so nothing is
+  re-encrypted. The new `vault.json` is stamped (`updated_at`) and signed
+  with a key derived from the master key (`mac`, see FORMAT.md) and
+  uploaded; the copy in Drive is replaced.
+- **Other devices** compare their `vault.json` with Drive's at the start of
+  a session, after unlocking and after such a change
+  (`cloud::reconcile_vault`). They adopt Drive's copy only if it's signed by
+  the master key and newer, so a copy planted or rolled back in Drive is
+  ignored. Until a device has synced once, it still opens with the old
+  passphrase (and the old recovery key still works there).
 
 ---
 
@@ -411,6 +431,20 @@ never assumes a just-made change is already visible to other devices.
   from the type); the trash goes to `Trash/`. File names are made safe for
   Windows/macOS/Linux and de-duplicated; note files keep their edit time.
   The export is plain text by design, and the app says so.
+- **Import from Evernote** (Settings → Import from Evernote; `memoir_core::import`):
+  the user picks one or more `.enex` files (Evernote's notebook export); each
+  becomes a top-level folder named after the file. The file is streamed note
+  by note (quick-xml), so large exports don't load into memory, and the
+  notebook is locked only one note at a time, so the app and sync keep
+  working meanwhile. A note keeps its title, created/updated dates and tags.
+  ENML becomes the editor's own Markdown dialect, exactly as the editor would
+  save it (a vitest round-trips samples to check): headings, bold/italic/
+  strike/code, links, lists and both kinds of Evernote checklists, tables,
+  code blocks, quotes and rules; anything else keeps its text. Resources
+  become attachments, matched to `en-media` by MD5; images show inline, other
+  files as links, and resources the content never references are appended.
+  Evernote-encrypted text and attachments over the 100 MB limit can't be
+  imported; the note says where they were and the summary counts them.
 - **`memoir decrypt <folder> --out <dir> [--recovery-key]`** (`crates/memoir-cli`):
   given a downloaded copy of the `Memoir/` Drive folder (or the folder the
   Drive zip was extracted into) and the passphrase or recovery key, it reads
@@ -595,8 +629,9 @@ Tauri's iOS build of the same app; the Xcode project is generated into
   group) directly. Same service and accounts as on the desktop.
 - **Data** in the app's sandbox (`Library/Application Support/com.memoir.notebook`).
 - **Not on iOS:** the updater (the App Store or TestFlight updates the app),
-  the menu bar and window close/quit handling, and Export to Markdown for
-  now (no folder picker; it will go through the Files app).
+  the menu bar and window close/quit handling, and Export to Markdown and
+  Import from Evernote for now (no folder picker, and `.enex` has no file
+  type the iOS picker knows; both will go through the Files app).
 - **Phone layout** (`app/src/lib/platform.ts`: `phone` = window ≤ 700 px,
   `touch` = coarse pointer): one pane at a time — the list, or the note /
   trash / settings with a "‹ Notes" back button (`app.listShown`, both panes
@@ -607,7 +642,9 @@ Tauri's iOS build of the same app; the Xcode project is generated into
   fields. A narrow desktop window gets the same one-pane layout.
 - **Leaving the app** (`visibilitychange`): the editor is saved and a sync
   starts; coming back pulls. iOS may suspend the app a few seconds later,
-  and anything not pushed by then goes up on the next sync.
+  and anything not pushed by then goes up on the next sync. Timers stop
+  while the app is suspended, so coming back checks auto-lock first; locking
+  returns a phone to the list.
 - **Google sign-in:** the desktop's loopback redirect isn't possible on
   iOS. The iOS app uses its own OAuth client (type iOS, no secret,
   `IOS_CLIENT_ID` in `cloud.rs`); Google redirects to the reversed client ID

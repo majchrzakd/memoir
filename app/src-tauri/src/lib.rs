@@ -2,6 +2,7 @@ mod attachments;
 mod cloud;
 mod commands;
 mod export;
+mod import;
 mod logging;
 #[cfg(target_os = "macos")]
 mod menu;
@@ -86,6 +87,9 @@ pub fn run() {
             commands::unlock,
             commands::unlock_with_recovery_key,
             commands::editor_flushed,
+            commands::lock,
+            commands::change_passphrase,
+            commands::new_recovery_key,
             commands::tree,
             commands::trashed_items,
             commands::create_folder,
@@ -119,6 +123,7 @@ pub fn run() {
             cloud::open_drive_notebook,
             cloud::forget_drive_notebook,
             export::export_notebook,
+            import::import_evernote,
             export::show_export,
             logging::app_info,
             logging::show_logs,

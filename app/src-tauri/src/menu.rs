@@ -21,10 +21,11 @@ pub const MENU_COMMAND_EVENT: &str = "menu-command";
 const QUIT: &str = "quit";
 /// Items handled by the UI: (id, label, shortcut).
 const SETTINGS: (&str, &str, &str) = ("settings", "Settings…", "Cmd+,");
-const FILE_ITEMS: [(&str, &str, &str); 3] = [
+const FILE_ITEMS: [(&str, &str, &str); 4] = [
     ("new-note", "New Note", "Cmd+N"),
     ("new-folder", "New Folder", "Shift+Cmd+N"),
     ("search", "Search…", "Cmd+K"),
+    ("lock", "Lock Memoir", "Cmd+L"),
 ];
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -64,7 +65,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             )?,
         ],
     )?;
-    let [new_note, new_folder, search] = FILE_ITEMS;
+    let [new_note, new_folder, search, lock] = FILE_ITEMS;
     let file = Submenu::with_items(
         app,
         "File",
@@ -74,6 +75,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &ui_item(new_folder)?,
             &separator()?,
             &ui_item(search)?,
+            &separator()?,
+            &ui_item(lock)?,
             &separator()?,
             &PredefinedMenuItem::close_window(app, None)?,
         ],

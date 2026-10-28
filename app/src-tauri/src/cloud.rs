@@ -10,7 +10,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use memoir_core::remote::{Area, ProviderError, StorageProvider};
+use memoir_core::remote::{Area, ProviderError, RemoteFile, StorageProvider};
 use memoir_core::sync::SyncEngine;
 use memoir_core::vault::VaultFile;
 use memoir_gdrive::{DriveConfig, DriveProvider, Folders, OAuthConfig, OAuthError, oauth};
@@ -271,17 +271,90 @@ async fn sign_in<R: Runtime>(
 
 /// The notebook's vault file in Drive, if there is one.
 async fn remote_vault(provider: &DriveProvider) -> Result<Option<VaultFile>, String> {
-    let files = provider.list(Area::Root).await.map_err(|e| e.to_string())?;
-    let Some(file) = files.into_iter().find(|f| f.name == VAULT_FILE) else {
+    let copies = remote_vaults(provider).await?;
+    if copies.is_empty() {
         return Ok(None);
+    }
+    // Normally one; while a change is being uploaded there can briefly be two.
+    copies
+        .into_iter()
+        .filter_map(|(_, file)| file)
+        .max_by_key(|f| f.updated_at.unwrap_or(0))
+        .map(Some)
+        .ok_or_else(|| "The notebook file in Drive can't be read.".to_string())
+}
+
+/// Every `vault.json` in the Memoir folder, with its content (None if
+/// unreadable).
+async fn remote_vaults(
+    provider: &DriveProvider,
+) -> Result<Vec<(RemoteFile, Option<VaultFile>)>, String> {
+    let files = provider.list(Area::Root).await.map_err(|e| e.to_string())?;
+    let mut copies = Vec::new();
+    for file in files.into_iter().filter(|f| f.name == VAULT_FILE) {
+        let json = provider
+            .download(&file.id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let parsed = VaultFile::from_json(&String::from_utf8_lossy(&json)).ok();
+        copies.push((file, parsed));
+    }
+    Ok(copies)
+}
+
+/// Keeps `vault.json` in Drive and on this device in step. A signed, newer
+/// copy in Drive (passphrase or recovery key changed on another device)
+/// replaces this device's; a signed, newer copy here (changed on this
+/// device) replaces Drive's; a missing one is uploaded. Anything unsigned
+/// or older is never taken over (see `VaultFile::supersedes`).
+async fn reconcile_vault(state: &AppState, provider: &DriveProvider) -> Result<(), String> {
+    let remote = remote_vaults(provider).await?;
+    let (local, keys) = {
+        let session = state.session()?;
+        (
+            session.vault_file().map_err(|e| e.to_string())?,
+            session.keys().map_err(|e| e.to_string())?,
+        )
     };
-    let json = provider
-        .download(&file.id)
+
+    let newer = remote
+        .iter()
+        .filter_map(|(_, file)| file.as_ref())
+        .filter(|file| file.supersedes(&local, &keys))
+        .max_by_key(|file| file.updated_at.unwrap_or(0));
+    if let Some(newer) = newer {
+        state
+            .session()?
+            .adopt_vault_file(newer)
+            .map_err(|e| e.to_string())?;
+        log::info!(
+            "the passphrase or recovery key was changed on another device; using the new one"
+        );
+        return Ok(());
+    }
+
+    let in_step = remote.iter().any(|(_, file)| file.as_ref() == Some(&local));
+    let ours_is_newest = remote
+        .iter()
+        .all(|(_, file)| file.as_ref().is_none_or(|f| local.supersedes(f, &keys)));
+    if in_step || !ours_is_newest {
+        return Ok(());
+    }
+    if remote.is_empty() {
+        log::warn!("vault.json was missing in Drive; uploading it again");
+    } else {
+        log::info!("uploading this device's new passphrase / recovery key setup");
+    }
+    provider
+        .upload(Area::Root, VAULT_FILE, local.to_json().into_bytes())
         .await
         .map_err(|e| e.to_string())?;
-    VaultFile::from_json(&String::from_utf8_lossy(&json))
-        .map(Some)
-        .map_err(|e| format!("The notebook file in Drive can't be read: {e}"))
+    for (old, _) in &remote {
+        if let Err(e) = provider.delete(&old.id).await {
+            log::warn!("could not remove the old vault.json from Drive: {e}");
+        }
+    }
+    Ok(())
 }
 
 /// Saves the sign-in for this (unlocked) notebook and starts using it.
@@ -309,7 +382,9 @@ fn remember(state: &AppState, signed_in: SignedIn) -> Result<(), String> {
 }
 
 /// Makes sure the Memoir folders and `vault.json` are still in Drive — the
-/// user may have deleted or trashed them — and recreates what's missing.
+/// user may have deleted or trashed them — and recreates what's missing;
+/// also brings passphrase / recovery key changes across devices.
+/// Runs at the start of a session, after unlocking and after such a change.
 /// The next sync round then lists the cloud fully and uploads every note
 /// again (see `Store::enqueue_lost`). Run once per session.
 pub async fn check_cloud_folder(state: &AppState, provider: &DriveProvider) -> Result<(), String> {
@@ -334,17 +409,7 @@ pub async fn check_cloud_folder(state: &AppState, provider: &DriveProvider) -> R
     if changed {
         log::warn!("the Memoir folder in Drive was missing; it was created again");
     }
-    if remote_vault(provider).await?.is_none() {
-        log::warn!("vault.json was missing in Drive; uploading it again");
-        let local = state
-            .session()
-            .and_then(|s| s.vault_file().map_err(|e| e.to_string()))?;
-        provider
-            .upload(Area::Root, VAULT_FILE, local.to_json().into_bytes())
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    reconcile_vault(state, provider).await
 }
 
 /// New device, step 1: sign in and find the notebook in Drive. Returns the

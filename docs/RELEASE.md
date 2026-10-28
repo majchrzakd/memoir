@@ -113,7 +113,9 @@ signed with the project's update key; the public half is
 2. GitHub → Actions → **Release** → Run workflow. It builds and signs on
    Windows and macOS and creates a **draft** release `v<version>` with the
    Windows installer, the Mac `.dmg` and `.app.tar.gz` (what updates
-   download), their `.sig` files and `latest.json`.
+   download), their `.sig` files and `latest.json`. An older draft for the
+   same version is replaced, so there's no need to delete it first, but
+   don't delete the new draft while the run is going.
 3. Check the draft (add notes: they're shown in the update notice) and
    **Publish**. Installed copies pick it up on their next check.
 

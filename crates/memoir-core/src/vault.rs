@@ -9,7 +9,9 @@
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use unicode_normalization::UnicodeNormalization;
 use zeroize::Zeroizing;
 
@@ -84,6 +86,14 @@ pub struct VaultFile {
     pub key_epoch: u32,
     pub passphrase: PassphraseSlot,
     pub recovery: RecoverySlot,
+    /// When the passphrase or recovery key last changed (unix ms). Files
+    /// from before this field existed have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+    /// HMAC-SHA256 (vault-mac key) over this file without `mac`: proves the
+    /// change was made by someone holding the master key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mac: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,8 +143,12 @@ pub fn create(passphrase: &str, params: KdfParams) -> Result<NewVault> {
         recovery: recovery_slot(&master, &vault_id, key_epoch, &recovery_key),
         vault_id,
         key_epoch,
+        updated_at: None,
+        mac: None,
     };
     let vault = UnlockedVault::from_master(&file, master);
+    let mut file = file;
+    file.stamp(vault.keys(), now_ms());
     Ok(NewVault {
         file,
         vault,
@@ -166,6 +180,53 @@ impl VaultFile {
 
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("vault file serializes")
+    }
+
+    /// Records a change made now and signs the file with the vault-mac key.
+    pub fn stamp(&mut self, keys: &Keyring, now_ms: i64) {
+        self.updated_at = Some(now_ms);
+        self.mac = Some(B64.encode(self.compute_mac(keys)));
+    }
+
+    /// Whether the file is signed by someone holding this vault's master key.
+    pub fn is_signed_by(&self, keys: &Keyring) -> bool {
+        let Some(mac) = self.mac.as_deref().and_then(|m| B64.decode(m).ok()) else {
+            return false;
+        };
+        let mut check = self.mac_state(keys);
+        check.update(&self.unsigned_bytes());
+        check.verify_slice(&mac).is_ok()
+    }
+
+    /// Whether this file should replace `current` on a device that holds
+    /// `keys`: the same vault, signed by its master key, and newer.
+    pub fn supersedes(&self, current: &VaultFile, keys: &Keyring) -> bool {
+        self.vault_id == current.vault_id
+            && self.key_epoch == current.key_epoch
+            && self != current
+            && self.is_signed_by(keys)
+            && self.updated_at.unwrap_or(0) > current.updated_at.unwrap_or(0)
+    }
+
+    fn compute_mac(&self, keys: &Keyring) -> Vec<u8> {
+        let mut mac = self.mac_state(keys);
+        mac.update(&self.unsigned_bytes());
+        mac.finalize().into_bytes().to_vec()
+    }
+
+    fn mac_state(&self, keys: &Keyring) -> Hmac<Sha256> {
+        <Hmac<Sha256> as KeyInit>::new_from_slice(keys.vault_mac.as_bytes())
+            .expect("HMAC accepts 32-byte keys")
+    }
+
+    /// The file as signed: compact JSON without `mac` (field order is fixed
+    /// by the struct).
+    fn unsigned_bytes(&self) -> Vec<u8> {
+        let unsigned = VaultFile {
+            mac: None,
+            ..self.clone()
+        };
+        serde_json::to_vec(&unsigned).expect("vault file serializes")
     }
 
     pub fn unlock(&self, passphrase: &str) -> Result<UnlockedVault> {
@@ -219,7 +280,7 @@ impl UnlockedVault {
         params: KdfParams,
     ) -> Result<VaultFile> {
         let passphrase = new_passphrase_checked(new_passphrase, params)?;
-        Ok(VaultFile {
+        let mut file = VaultFile {
             passphrase: passphrase_slot(
                 &self.master,
                 &file.vault_id,
@@ -228,19 +289,28 @@ impl UnlockedVault {
                 params,
             )?,
             ..file.clone()
-        })
+        };
+        file.stamp(&self.keys, now_ms());
+        Ok(file)
     }
 
     /// Issues a new recovery key and invalidates the old one; the passphrase
     /// keeps working.
     pub fn replace_recovery_key(&self, file: &VaultFile) -> (VaultFile, RecoveryKey) {
         let recovery_key = RecoveryKey::generate();
-        let file = VaultFile {
+        let mut file = VaultFile {
             recovery: recovery_slot(&self.master, &file.vault_id, file.key_epoch, &recovery_key),
             ..file.clone()
         };
+        file.stamp(&self.keys, now_ms());
         (file, recovery_key)
     }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
 }
 
 fn new_passphrase_checked(passphrase: &str, params: KdfParams) -> Result<Zeroizing<String>> {
@@ -486,6 +556,52 @@ mod tests {
             &new.vault
         ));
         assert!(file.unlock(PASS).is_ok());
+    }
+
+    #[test]
+    fn signed_changes_supersede_older_files_and_forgeries_do_not() {
+        let new = create(PASS, FAST).unwrap();
+        let keys = new.vault.keys();
+        assert!(new.file.is_signed_by(keys), "new vaults are signed");
+
+        // A change made on another device (it holds the master key).
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let changed = new
+            .vault
+            .change_passphrase(&new.file, "a brand new passphrase", FAST)
+            .unwrap();
+        let changed = VaultFile::from_json(&changed.to_json()).unwrap();
+        assert!(changed.is_signed_by(keys));
+        assert!(changed.supersedes(&new.file, keys));
+        assert!(!new.file.supersedes(&changed, keys), "no rollback to older");
+        assert!(!changed.supersedes(&changed, keys), "nothing to replace");
+
+        // Anyone without the master key: tampering or re-signing fails.
+        let mut tampered = changed.clone();
+        tampered.updated_at = Some(i64::MAX);
+        assert!(!tampered.supersedes(&new.file, keys));
+        let other = create(PASS, FAST).unwrap();
+        let mut forged = changed.clone();
+        forged.stamp(other.vault.keys(), i64::MAX);
+        assert!(!forged.supersedes(&new.file, keys));
+        let mut unsigned = changed.clone();
+        unsigned.mac = None;
+        assert!(!unsigned.supersedes(&new.file, keys));
+        let mut other_vault = other.file.clone();
+        other_vault.stamp(keys, i64::MAX);
+        assert!(
+            !other_vault.supersedes(&new.file, keys),
+            "different vault id"
+        );
+
+        // Files from before signing existed still load and unlock.
+        let mut old = new.file.clone();
+        old.updated_at = None;
+        old.mac = None;
+        let json = old.to_json();
+        assert!(!json.contains("updated_at") && !json.contains("mac"));
+        VaultFile::from_json(&json).unwrap().unlock(PASS).unwrap();
+        assert!(changed.supersedes(&old, keys));
     }
 
     #[test]

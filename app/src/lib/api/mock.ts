@@ -12,6 +12,7 @@ import {
   type Api,
   type CloudStatus,
   type HistoryEntry,
+  type ImportProgress,
   type SyncStatus,
   type Id,
   type Kind,
@@ -37,6 +38,8 @@ interface Obj {
 }
 
 const MOCK_PASSPHRASE = 'correct horse'
+/** Set by changePassphrase (the original keeps working too, for demos). */
+let mockPassphrase = MOCK_PASSPHRASE
 
 export function createMockApi(): Api {
   const objects = new Map<Id, Obj>()
@@ -48,6 +51,7 @@ export function createMockApi(): Api {
     ? { version: '0.2.0', notes: 'Faster sync and a new icon.' }
     : null
   const syncListeners = new Set<(s: SyncStatus) => void>()
+  const importListeners = new Set<(p: ImportProgress) => void>()
   const syncStatus = (): SyncStatus => ({
     state: cloud.connected ? 'idle' : 'off',
     pending: 0,
@@ -261,8 +265,20 @@ export function createMockApi(): Api {
     async finishSetup() {
       status = 'unlocked'
     },
+    async lock() {
+      status = 'locked'
+    },
+    async changePassphrase(current, newPassphrase) {
+      if (current !== MOCK_PASSPHRASE) throw 'wrong passphrase'
+      if ([...newPassphrase].length < 8) throw 'the passphrase must have at least 8 characters'
+      mockPassphrase = newPassphrase
+    },
+    async newRecoveryKey(passphrase) {
+      if (passphrase !== MOCK_PASSPHRASE && passphrase !== mockPassphrase) throw 'wrong passphrase'
+      return 'MOCK1-2345-6789-ABCD-EFGH-JKMN-PQRS-TVWX-YZ01'
+    },
     async unlock(passphrase) {
-      if (passphrase !== MOCK_PASSPHRASE) throw 'wrong passphrase'
+      if (passphrase !== MOCK_PASSPHRASE && passphrase !== mockPassphrase) throw 'wrong passphrase'
       status = 'unlocked'
     },
     async unlockWithRecoveryKey(recoveryKey) {
@@ -487,6 +503,22 @@ export function createMockApi(): Api {
       }
     },
     async showExport() {},
+    async importEvernote() {
+      const folder = create('folder', { parent: null, position: { type: 'last' } }, 'Recipes')
+      for (let i = 1; i <= 3; i++) {
+        await new Promise((r) => setTimeout(r, 400))
+        create('note', { parent: folder, position: { type: 'last' } }, `Imported recipe ${i}`)
+        importListeners.forEach((l) => l({ file: 'Recipes', notes: i }))
+      }
+      return {
+        folders: ['Recipes'],
+        summary: { notes: 3, attachments: 2, skipped_attachments: 0, encrypted_sections: 1 },
+      }
+    },
+    async onImportProgress(handler) {
+      importListeners.add(handler)
+      return () => importListeners.delete(handler)
+    },
 
     async appInfo() {
       return {

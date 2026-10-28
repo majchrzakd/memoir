@@ -12,6 +12,11 @@ on:
 permissions:
   contents: write
 
+# One release run at a time: each run replaces the version's draft.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   # One draft for both builds (created here, so they don't race to create it).
   draft:
@@ -30,7 +35,9 @@ jobs:
           [ -n "$SIGNING_KEY" ] || { echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY repository secret"; exit 1; }
           ! grep -q REPLACE_WITH_UPDATE_PUBLIC_KEY app/src-tauri/tauri.conf.json || { echo "::error::Put the update public key (memoir.key.pub) into tauri.conf.json"; exit 1; }
 
-      - name: Create the draft release (or reuse one from an earlier run)
+      # Always a fresh draft: an older one for this version may be from an
+      # earlier workflow, or be deleted while this run builds.
+      - name: Create the draft release (replacing an older draft)
         id: draft
         uses: actions/github-script@v7
         with:
@@ -38,8 +45,13 @@ jobs:
             const { version } = require('./app/src-tauri/tauri.conf.json')
             const tag = `v${version}`
             const releases = await github.paginate(github.rest.repos.listReleases, context.repo)
-            const existing = releases.find((r) => r.draft && r.tag_name === tag)
-            if (existing) return existing.id
+            if (releases.some((r) => !r.draft && r.tag_name === tag)) {
+              throw new Error(`${tag} is already published. Set a new version in app/src-tauri/tauri.conf.json and Cargo.toml.`)
+            }
+            for (const old of releases.filter((r) => r.draft && r.tag_name === tag)) {
+              await github.rest.repos.deleteRelease({ ...context.repo, release_id: old.id })
+              core.info(`Deleted the older draft ${old.id} for ${tag}`)
+            }
             const { data } = await github.rest.repos.createRelease({
               ...context.repo,
               tag_name: tag,
@@ -54,6 +66,7 @@ jobs:
               draft: true,
               prerelease: false,
             })
+            core.info(`Created draft ${data.id} for ${tag}`)
             return data.id
 
   build:
@@ -112,6 +125,22 @@ jobs:
           for name in $names; do
             echo "$name=${!name}" >> "$GITHUB_ENV"
           done
+
+      # Fail early and clearly if the draft disappeared (rather than with
+      # "Not Found" after the whole build).
+      - name: Check that the draft release still exists
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.draft.outputs.release_id }}
+        with:
+          script: |
+            const id = Number(process.env.RELEASE_ID)
+            try {
+              const { data } = await github.rest.repos.getRelease({ ...context.repo, release_id: id })
+              core.info(`Uploading to draft ${id} (${data.tag_name})`)
+            } catch (e) {
+              core.setFailed(`The draft release ${id} no longer exists (deleted while this run was going?). Run the Release workflow again.`)
+            }
 
       - uses: tauri-apps/tauri-action@v0
         env:
