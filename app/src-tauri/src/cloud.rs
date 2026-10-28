@@ -46,9 +46,14 @@ pub struct Cloud {
     connecting: AtomicBool,
     /// Signed in on a new device, notebook found, waiting for the passphrase.
     joining: Mutex<Option<Joining>>,
-    /// iOS: where to pass the URL Google's sign-in redirects back to.
+    /// iOS: where to pass the URLs Google's sign-in redirects back to, while a
+    /// sign-in is waiting.
     #[cfg(target_os = "ios")]
-    redirect: Mutex<Option<tokio::sync::oneshot::Sender<String>>>,
+    redirect: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
+    /// iOS: a sign-in came back with nothing waiting for it (iOS restarted
+    /// the app while the user was in Safari, or it was cancelled).
+    #[cfg(target_os = "ios")]
+    redirect_lost: AtomicBool,
 }
 
 /// A Google sign-in with the Memoir folder set up.
@@ -72,9 +77,24 @@ impl Cloud {
         if !url.starts_with(&oauth::app_redirect_uri(IOS_CLIENT_ID)) {
             return;
         }
-        if let Some(waiting) = self.redirect.lock().expect("lock").take() {
-            let _ = waiting.send(url.to_owned());
+        match &*self.redirect.lock().expect("lock") {
+            Some(waiting) => {
+                let _ = waiting.send(url.to_owned());
+            }
+            None => self.redirect_lost.store(true, Ordering::SeqCst),
         }
+    }
+
+    /// Something to tell the user about the last sign-in, if any.
+    fn sign_in_problem(&self) -> Option<String> {
+        #[cfg(target_os = "ios")]
+        if self.redirect_lost.load(Ordering::SeqCst) {
+            return Some(
+                "Google sign-in finished after Memoir stopped waiting for it. Connect again."
+                    .into(),
+            );
+        }
+        None
     }
 
     /// The connected provider, if any.
@@ -146,10 +166,12 @@ fn status(state: &AppState, problem: Option<String>) -> CloudStatus {
         connected,
         connecting: state.cloud.connecting.load(Ordering::SeqCst),
         account,
-        problem: problem.or_else(|| {
-            (saved && !connected)
-                .then(|| "The Google sign-in is missing on this device. Connect again.".into())
-        }),
+        problem: problem
+            .or_else(|| (!connected).then(|| state.cloud.sign_in_problem())?)
+            .or_else(|| {
+                (saved && !connected)
+                    .then(|| "The Google sign-in is missing on this device. Connect again.".into())
+            }),
     }
 }
 
@@ -241,17 +263,20 @@ async fn sign_in<R: Runtime>(
     let sign_in = oauth::sign_in(&config, &http, open_browser, state.cloud.cancel.notified()).await;
     #[cfg(target_os = "ios")]
     let sign_in = {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        state.cloud.redirect_lost.store(false, Ordering::SeqCst);
         *state.cloud.redirect.lock().expect("lock") = Some(tx);
-        oauth::sign_in_with_app_redirect(
+        let sign_in = oauth::sign_in_with_app_redirect(
             &config,
             &http,
             &oauth::app_redirect_uri(&config.client_id),
             open_browser,
-            async move { rx.await.unwrap_or_default() },
+            rx,
             state.cloud.cancel.notified(),
         )
-        .await
+        .await;
+        *state.cloud.redirect.lock().expect("lock") = None;
+        sign_in
     };
     let sign_in = sign_in.map_err(|e| match e {
         OAuthError::Cancelled => "Connecting was cancelled.".to_string(),

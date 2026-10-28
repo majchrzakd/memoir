@@ -12,6 +12,7 @@ import {
   type UpdateInfo,
 } from './api'
 import type { EditorOptions } from './editor/extensions'
+import { isIOS } from './platform'
 import { ancestorIds, childrenMap, visibleRows } from './tree'
 
 type Screen = 'loading' | Status
@@ -59,6 +60,8 @@ class App {
   view = $state<View>('note')
   /** Phone layout: the notes list is shown instead of the note, trash or settings. */
   listShown = $state(true)
+  /** iOS, in the background: everything is hidden from the app switcher. */
+  covered = $state(false)
 
   items = $state.raw<TreeItem[]>([])
   expanded = new SvelteSet<Id>(load<Id[]>(EXPANDED_KEY, []))
@@ -135,14 +138,19 @@ class App {
     await api.onUpdateAvailable((update) => (this.update = update))
     this.update = await api.availableUpdate()
     // iOS has no "closing": leaving the app is the moment to save and push
-    // (it may be suspended a few seconds later). Coming back pulls, or locks
-    // first if the auto-lock time passed while timers were suspended.
+    // (it may be suspended a few seconds later), and to cover the notes so
+    // the app switcher's snapshot doesn't show them. Coming back pulls, or
+    // locks instead if the auto-lock time passed while timers were suspended.
     document.addEventListener('visibilitychange', () => {
+      this.covered = isIOS && document.hidden
       if (this.screen !== 'unlocked') return
-      if (document.hidden) void this.flushEditor().finally(() => void api.syncNow())
-      else {
-        this.checkIdle()
-        void api.syncNow()
+      if (document.hidden) {
+        this.flushEditor().then(
+          () => this.syncNow(),
+          (e) => this.fail(e),
+        )
+      } else if (!this.checkIdle()) {
+        this.syncNow()
       }
     })
   }
@@ -199,12 +207,14 @@ class App {
     this.lastActivity = Date.now()
   }
 
-  /** Called every few seconds: locks once idle long enough. */
-  checkIdle(now = Date.now()) {
+  /** Called every few seconds: locks once idle long enough (and says so). */
+  checkIdle(now = Date.now()): boolean {
     const minutes = this.autoLockMinutes
     if (minutes > 0 && this.screen === 'unlocked' && now - this.lastActivity >= minutes * 60_000) {
       void this.lock()
+      return true
     }
+    return false
   }
 
   fail(e: unknown) {

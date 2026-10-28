@@ -9,9 +9,13 @@ export const isApple =
 
 /**
  * iPhone or iPad: no self-updates (the App Store or TestFlight updates the
- * app), and no folders to export into or to open.
+ * app), and no folders to export into or to open. An iPad's web view says
+ * it's a Mac ("MacIntel"); unlike a Mac, it has a touch screen.
  */
-export const isIOS = typeof navigator !== 'undefined' && /^(iPhone|iPad)/.test(navigator.platform)
+export const isIOS =
+  typeof navigator !== 'undefined' &&
+  (/^(iPhone|iPad)/.test(navigator.platform) ||
+    (/^Mac/.test(navigator.platform) && navigator.maxTouchPoints > 1))
 
 /** A touch screen is the main pointer: no keyboard hints, bigger targets. */
 export const touch = new MediaQuery('(pointer: coarse)')

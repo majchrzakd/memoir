@@ -11,6 +11,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use url::Url;
 use zeroize::Zeroizing;
 
@@ -131,13 +132,14 @@ pub fn app_redirect_uri(client_id: &str) -> String {
 
 /// Like [`sign_in`], but the browser comes back to the app itself: Google
 /// redirects to `redirect_uri` (see [`app_redirect_uri`]), the system opens
-/// the app with that URL, and `redirected` resolves to it.
+/// the app with that URL, and it arrives on `redirects`. Redirects from an
+/// earlier, abandoned sign-in (another `state`) are skipped.
 pub async fn sign_in_with_app_redirect(
     config: &OAuthConfig,
     http: &reqwest::Client,
     redirect_uri: &str,
     open_browser: impl FnOnce(&str) -> Result<(), String>,
-    redirected: impl Future<Output = String>,
+    mut redirects: mpsc::UnboundedReceiver<String>,
     cancel: impl Future<Output = ()>,
 ) -> Result<SignIn, OAuthError> {
     authorize(
@@ -145,7 +147,14 @@ pub async fn sign_in_with_app_redirect(
         http,
         redirect_uri,
         open_browser,
-        |state| async move { code_from_redirect(&redirected.await, &state) },
+        |state| async move {
+            while let Some(url) = redirects.recv().await {
+                if let Some(code) = code_from_redirect(&url, &state).transpose() {
+                    return code;
+                }
+            }
+            Err(OAuthError::Cancelled)
+        },
         cancel,
     )
     .await
@@ -372,21 +381,27 @@ async fn wait_for_redirect(
     }
 }
 
-/// The authorization code from the URL Google redirected to.
-fn code_from_redirect(redirected: &str, expected_state: &str) -> Result<String, OAuthError> {
+/// The authorization code from the URL Google redirected to; None if the
+/// redirect belongs to another sign-in (its `state` differs).
+fn code_from_redirect(
+    redirected: &str,
+    expected_state: &str,
+) -> Result<Option<String>, OAuthError> {
     let url = Url::parse(redirected).map_err(|e| OAuthError::Protocol(e.to_string()))?;
     let param = |k: &str| {
         url.query_pairs()
             .find(|(key, _)| key == k)
             .map(|(_, v)| v.into_owned())
     };
+    if param("state").as_deref() != Some(expected_state) {
+        return Ok(None);
+    }
     if let Some(err) = param("error") {
         return Err(OAuthError::Denied(err));
     }
-    if param("state").as_deref() != Some(expected_state) {
-        return Err(OAuthError::Protocol("state mismatch".into()));
-    }
-    param("code").ok_or_else(|| OAuthError::Protocol("no code".into()))
+    param("code")
+        .map(Some)
+        .ok_or_else(|| OAuthError::Protocol("no code".into()))
 }
 
 fn random_token(bytes: usize) -> String {
@@ -412,11 +427,15 @@ mod tests {
         let uri = app_redirect_uri("123-abc.apps.googleusercontent.com");
         assert_eq!(
             code_from_redirect(&format!("{uri}?state=s1&code=c1"), "s1"),
-            Ok("c1".into())
+            Ok(Some("c1".into()))
         );
         assert_eq!(
             code_from_redirect(&format!("{uri}?state=other&code=c1"), "s1"),
-            Err(OAuthError::Protocol("state mismatch".into()))
+            Ok(None)
+        );
+        assert_eq!(
+            code_from_redirect(&format!("{uri}?error=access_denied&state=other"), "s1"),
+            Ok(None)
         );
         assert_eq!(
             code_from_redirect(&format!("{uri}?error=access_denied&state=s1"), "s1"),
