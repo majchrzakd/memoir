@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Editor } from '@tiptap/core'
+  import { TextSelection } from '@tiptap/pm/state'
   import { onMount, untrack } from 'svelte'
   import { api, type Id, type Note, type NoteText } from '../api'
   import { app } from '../app.svelte'
@@ -182,21 +183,42 @@
     }
   }
 
-  /** Clicking empty space in the page puts the cursor in the text: on the
-   * line level with the click, or at the end when clicking below the text. */
+  /** The text position nearest a point outside (or inside) the text: on the
+   * line level with it, or the end when below the text. */
+  function posFromPoint(view: Editor['view'], x: number, y: number) {
+    const rect = view.dom.getBoundingClientRect()
+    const end = view.state.doc.content.size
+    if (y > rect.bottom) return end
+    const left = Math.min(Math.max(x, rect.left + 1), rect.right - 1)
+    return view.posAtCoords({ left, top: Math.max(y, rect.top + 1) })?.pos ?? end
+  }
+
+  /** Clicking empty space in the page puts the cursor in the text; dragging
+   * from there selects, as dragging inside the text does (the browser can't,
+   * since the press didn't start in the text). Shift extends the selection. */
   function focusFromClick(e: MouseEvent) {
     const target = e.target as HTMLElement
-    if (!editor || target.closest('.ProseMirror, input, button, .meta, .thread')) return
+    if (!editor || e.button !== 0) return
+    if (target.closest('.ProseMirror, input, button, .meta, .thread')) return
     e.preventDefault()
     const view = editor.view
-    const rect = view.dom.getBoundingClientRect()
-    let pos = view.state.doc.content.size
-    if (e.clientY <= rect.bottom) {
-      const left = Math.min(Math.max(e.clientX, rect.left + 1), rect.right - 1)
-      pos = view.posAtCoords({ left, top: Math.max(e.clientY, rect.top + 1) })?.pos ?? pos
+    const anchor = e.shiftKey
+      ? view.state.selection.anchor
+      : posFromPoint(view, e.clientX, e.clientY)
+    const select = (head: number) => {
+      const { doc, tr } = view.state
+      view.dispatch(tr.setSelection(TextSelection.between(doc.resolve(anchor), doc.resolve(head))))
     }
-    editor.commands.setTextSelection(pos)
+    select(posFromPoint(view, e.clientX, e.clientY))
     view.focus()
+
+    const move = (m: MouseEvent) => select(posFromPoint(view, m.clientX, m.clientY))
+    const up = () => {
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
   }
 
   $effect(() => {
