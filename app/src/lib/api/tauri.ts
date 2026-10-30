@@ -31,6 +31,11 @@ export const tauriApi: Api = {
 
   tree: () => invoke('tree'),
   trashedItems: () => invoke('trashed_items'),
+  setFolderPassword: (id, current, password) =>
+    invoke('set_folder_password', { id, current, password }),
+  unlockFolder: (id, password) => invoke('unlock_folder', { id, password }),
+  lockFolder: (id) => invoke('lock_folder', { id }),
+  forgetFolderPassword: (id, passphrase) => invoke('forget_folder_password', { id, passphrase }),
   createFolder: (placement, name) => invoke('create_folder', { placement, name }),
   createNote: (placement, title) => invoke('create_note', { placement, title }),
   rename: (id, title) => invoke('rename', { id, title }),

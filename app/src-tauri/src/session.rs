@@ -265,6 +265,12 @@ impl Session {
         self.clear_opened_files();
     }
 
+    /// Fails unless `passphrase` is the notebook's.
+    pub fn check_passphrase(&self, passphrase: &str) -> Result<()> {
+        self.vault_file()?.unlock(passphrase)?;
+        Ok(())
+    }
+
     /// Checks the current passphrase and sets a new one; the recovery key
     /// keeps working. Returns the updated vault file, for the cloud copy.
     pub fn change_passphrase(&mut self, current: &str, new: &str) -> Result<VaultFile> {

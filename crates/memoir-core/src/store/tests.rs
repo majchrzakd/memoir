@@ -898,3 +898,123 @@ fn history_merges_versions_saved_moments_apart() {
     f.store.save_note(&note, "T", "v13").unwrap();
     assert_eq!(bodies(&f.store, &note), ["v12", "v0"]);
 }
+
+#[test]
+fn a_locked_folder_hides_its_contents_until_unlocked() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let private = s.create_folder(last(None), "Private").unwrap();
+    let inner = s.create_folder(last(Some(private)), "Inner").unwrap();
+    let note = s
+        .create_note(last(Some(inner)), "Diary", "secret words")
+        .unwrap();
+    let reply = s.add_reply(&note, "secret reply").unwrap();
+    let gone = s
+        .create_note(last(Some(private)), "Old", "secret too")
+        .unwrap();
+    s.set_later(&note, true, None).unwrap();
+    s.move_to_trash(&gone).unwrap();
+    let outside = s
+        .create_note(last(None), "Index", &format!("[d](note:{note})"))
+        .unwrap();
+
+    s.set_folder_password(&private, None, Some("pw")).unwrap();
+    let tree = s.tree().unwrap();
+    assert_eq!(titles(&tree, None), ["Private", "Index"]);
+    let folder = tree.iter().find(|i| i.id == private).unwrap();
+    assert!(folder.protected && folder.locked);
+    assert!(s.search("secret", 10).unwrap().is_empty());
+    assert!(s.later_notes().unwrap().is_empty());
+    assert!(s.trashed_items().unwrap().is_empty());
+    assert!(matches!(s.note(&note), Err(StoreError::FolderLocked(_))));
+    assert!(matches!(s.note(&reply), Err(StoreError::FolderLocked(_))));
+    assert!(s.replies(&note).is_err() && s.history(&note).is_err());
+    assert!(s.backlinks(&outside).unwrap().is_empty());
+    assert_eq!(s.locked_folders().unwrap(), ["Private"]);
+
+    assert!(matches!(
+        s.unlock_folder(&private, "nope"),
+        Err(StoreError::WrongFolderPassword)
+    ));
+    s.unlock_folder(&private, "pw").unwrap();
+    let tree = s.tree().unwrap();
+    assert_eq!(titles(&tree, Some(inner)), ["Diary"]);
+    let folder = tree.iter().find(|i| i.id == private).unwrap();
+    assert!(folder.protected && !folder.locked);
+    assert_eq!(s.search("secret", 10).unwrap().len(), 2);
+    assert_eq!(s.note(&note).unwrap().body, "secret words");
+    assert_eq!(s.later_notes().unwrap().len(), 1);
+    assert_eq!(s.trashed_items().unwrap().len(), 1);
+    assert!(s.locked_folders().unwrap().is_empty());
+
+    s.lock_folder(&private).unwrap();
+    assert!(s.note(&note).is_err());
+
+    // Closing the notebook locks it again.
+    let path = f.path.clone();
+    drop(f.store);
+    let s = Store::open(&path, &SecretKey::from_bytes(KEY)).unwrap();
+    assert!(s.note(&note).is_err());
+}
+
+#[test]
+fn folder_passwords_are_changed_and_removed_with_the_current_one() {
+    let mut f = fixture();
+    let s = &mut f.store;
+    let folder = s.create_folder(last(None), "F").unwrap();
+    let note = s.create_note(last(Some(folder)), "N", "").unwrap();
+    assert!(matches!(
+        s.set_folder_password(&folder, None, Some("")),
+        Err(StoreError::EmptyPassword)
+    ));
+    assert!(matches!(
+        s.set_folder_password(&note, None, Some("pw")),
+        Err(StoreError::NotAFolder(_))
+    ));
+    s.set_folder_password(&folder, None, Some("one")).unwrap();
+    assert!(matches!(
+        s.set_folder_password(&folder, None, Some("two")),
+        Err(StoreError::WrongFolderPassword)
+    ));
+    s.set_folder_password(&folder, Some("one"), Some("two"))
+        .unwrap();
+    assert!(s.unlock_folder(&folder, "one").is_err());
+    s.unlock_folder(&folder, "two").unwrap();
+    // A new password locks the folder again.
+    s.set_folder_password(&folder, Some("two"), Some("three"))
+        .unwrap();
+    assert!(s.note(&note).is_err());
+
+    s.set_folder_password(&folder, Some("three"), None).unwrap();
+    assert!(s.note(&note).is_ok());
+    s.set_folder_password(&folder, None, Some("four")).unwrap();
+    // Forgotten: removed after the caller checked the notebook passphrase.
+    s.clear_folder_password(&folder).unwrap();
+    assert!(s.note(&note).is_ok());
+    assert!(!s.tree().unwrap()[0].protected);
+}
+
+#[test]
+fn folder_passwords_sync_with_the_folder() {
+    let mut a = fixture();
+    let mut b = fixture();
+    let folder = a.store.create_folder(last(None), "F").unwrap();
+    a.store
+        .set_folder_password(&folder, None, Some("pw"))
+        .unwrap();
+    let payload = a.store.payload(&folder).unwrap().unwrap();
+    let json = serde_json::to_string(&payload).unwrap();
+    assert!(!json.contains("\"pw\""));
+    let payload: crate::sync::ObjectPayload = serde_json::from_str(&json).unwrap();
+    let sync = b.store.sync_object(&folder).unwrap();
+    b.store.apply_synced(&payload, &sync, false, None).unwrap();
+    let note = b.store.create_note(last(Some(folder)), "N", "").unwrap();
+    assert!(b.store.note(&note).is_err());
+    b.store.unlock_folder(&folder, "pw").unwrap();
+    assert!(b.store.note(&note).is_ok());
+
+    // Objects without a password are written as before.
+    let plain = a.store.create_note(last(None), "P", "").unwrap();
+    let json = serde_json::to_string(&a.store.payload(&plain).unwrap().unwrap()).unwrap();
+    assert!(!json.contains("\"lock\":{\"kdf"));
+}

@@ -120,6 +120,11 @@ const MIGRATIONS: &[&str] = &[
         modified  INTEGER NOT NULL DEFAULT 0
     );
     "#,
+    // 6: folder passwords (JSON `FolderLock`: a hash, never the password).
+    r#"
+    ALTER TABLE objects ADD COLUMN lock TEXT;
+    CREATE INDEX objects_locked ON objects (id) WHERE lock IS NOT NULL;
+    "#,
 ];
 
 pub fn migrate(conn: &mut Connection) -> Result<(), StoreError> {

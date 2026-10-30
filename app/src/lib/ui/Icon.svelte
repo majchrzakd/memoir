@@ -15,6 +15,7 @@
     trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3',
     restore: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
     lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4',
+    unlock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 7.7-1.5',
     copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
     check: 'm5 12 5 5L20 7',
     clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2',

@@ -1,12 +1,14 @@
-﻿//! Local store: folders and notes in the encrypted SQLite database.
+//! Local store: folders and notes in the encrypted SQLite database.
 //!
 //! The store is the source of truth for the UI. Every change is one
 //! transaction that updates the object, its search index and the sync
 //! outbox together, so after a commit the change survives a crash and is
 //! guaranteed to be pushed eventually.
 
+mod folder_lock;
 mod schema;
 pub mod sort_key;
+pub use folder_lock::FolderLock;
 mod sync_state;
 pub use sync_state::{OutboxEntry, RevisionRow, SyncObject};
 mod text;
@@ -69,6 +71,12 @@ pub enum StoreError {
     NoSuchVersion(ObjectId, i64),
     #[error("this database was written by a newer version of Memoir (schema {0})")]
     NewerSchema(usize),
+    #[error("this is in a locked folder; unlock the folder first")]
+    FolderLocked(ObjectId),
+    #[error("wrong folder password")]
+    WrongFolderPassword,
+    #[error("the password can't be empty")]
+    EmptyPassword,
     #[error("stored data is corrupt: {0}")]
     Corrupt(String),
 }
@@ -179,6 +187,10 @@ pub struct TreeItem {
     pub trashed_at: Option<i64>,
     /// Number of replies in the note's thread (always 0 for folders).
     pub replies: u32,
+    /// A folder with a password.
+    pub protected: bool,
+    /// A folder with a password not entered yet: its contents are left out.
+    pub locked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -283,12 +295,20 @@ impl Placement {
     }
 }
 
-/// All objects in the trash or inside a trashed folder.
+/// `hidden`: all objects in the trash or inside a trashed folder.
+/// `locked`: everything inside a folder whose password hasn't been entered
+/// (see [`Store::unlock_folder`]), at any depth.
 const HIDDEN_CTE: &str = "
     WITH RECURSIVE hidden(id) AS (
         SELECT id FROM objects WHERE trashed_at IS NOT NULL
         UNION
         SELECT o.id FROM objects o JOIN hidden h ON o.parent_id = h.id
+    ),
+    locked(id) AS (
+        SELECT o.id FROM objects f JOIN objects o ON o.parent_id = f.id
+        WHERE f.lock IS NOT NULL AND f.id NOT IN temp.unlocked_folders
+        UNION
+        SELECT o.id FROM objects o JOIN locked l ON o.parent_id = l.id
     )";
 
 /// Columns read by [`tree_item`], for `objects o`.
@@ -297,7 +317,9 @@ const TREE_COLUMNS: &str = "
     CASE WHEN o.kind = 2 THEN (
         SELECT count(*) FROM objects r
         WHERE r.parent_id = o.id AND r.kind = 2 AND r.trashed_at IS NULL
-    ) ELSE 0 END";
+    ) ELSE 0 END,
+    o.lock IS NOT NULL,
+    o.lock IS NOT NULL AND o.id NOT IN temp.unlocked_folders";
 
 /// True for `objects o` rows that are replies: notes whose parent is a note.
 const IS_REPLY: &str = "(o.kind = 2 AND EXISTS (
@@ -322,6 +344,8 @@ pub(crate) enum Field {
     Tags,
     Trashed,
     Later,
+    /// The folder password.
+    Lock,
 }
 
 impl Field {
@@ -332,6 +356,7 @@ impl Field {
         Field::Tags,
         Field::Trashed,
         Field::Later,
+        Field::Lock,
     ];
 
     pub(crate) fn key(self) -> &'static str {
@@ -342,6 +367,7 @@ impl Field {
             Field::Tags => "tags",
             Field::Trashed => "trashed",
             Field::Later => "later",
+            Field::Lock => "lock",
         }
     }
 }
@@ -353,6 +379,9 @@ impl Store {
         // Every committed change is on disk before the call returns.
         conn.pragma_update(None, "synchronous", "FULL")?;
         schema::migrate(&mut conn)?;
+        // Folders whose password was entered: for this connection only, so
+        // closing the notebook locks them all again.
+        conn.execute_batch("CREATE TEMP TABLE unlocked_folders (id TEXT PRIMARY KEY)")?;
         let mut store = Self {
             conn,
             clock: Box::new(|| {
@@ -468,13 +497,14 @@ impl Store {
         Ok(())
     }
 
-    /// Every folder and note not in the trash (replies excluded), ordered by
-    /// parent, then folders before notes, then position.
+    /// Every folder and note not in the trash (replies and the contents of
+    /// locked folders excluded), ordered by parent, then folders before
+    /// notes, then position.
     pub fn tree(&self) -> Result<Vec<TreeItem>> {
         let mut stmt = self.conn.prepare_cached(&format!(
             "{HIDDEN_CTE}
              SELECT {TREE_COLUMNS} FROM objects o
-             WHERE o.id NOT IN hidden AND NOT {IS_REPLY}
+             WHERE o.id NOT IN hidden AND o.id NOT IN locked AND NOT {IS_REPLY}
              ORDER BY o.parent_id, o.kind, o.sort_key, o.id"
         ))?;
         let mut items = stmt
@@ -499,7 +529,7 @@ impl Store {
              SELECT {TREE_COLUMNS} FROM objects o
              WHERE o.trashed_at IS NOT NULL
                AND (o.parent_id IS NULL OR o.parent_id NOT IN hidden)
-               AND NOT {IS_REPLY}
+               AND o.id NOT IN locked AND NOT {IS_REPLY}
              ORDER BY o.trashed_at DESC, o.id"
         ))?;
         Ok(stmt
@@ -729,7 +759,14 @@ impl Store {
 
     // ---- Notes --------------------------------------------------------
 
+    /// A note (or reply), unless it's in a locked folder.
     pub fn note(&self, id: &ObjectId) -> Result<Note> {
+        self.check_unlocked(id)?;
+        self.load_note(id)
+    }
+
+    /// A note even if it's in a locked folder (for changes and sync).
+    pub(crate) fn load_note(&self, id: &ObjectId) -> Result<Note> {
         let note = self
             .conn
             .prepare_cached(
@@ -766,7 +803,7 @@ impl Store {
     /// Saves a note's title and body. Saving unchanged content is a no-op,
     /// so re-saving never creates sync traffic.
     pub fn save_note(&mut self, id: &ObjectId, title: &str, body: &str) -> Result<()> {
-        let old = self.note(id)?;
+        let old = self.load_note(id)?;
         if old.title == title && old.body == body {
             return Ok(());
         }
@@ -811,7 +848,7 @@ impl Store {
         title: &str,
         body: &str,
     ) -> Result<Option<Note>> {
-        let current = self.note(id)?;
+        let current = self.load_note(id)?;
         if current.title == base_title && current.body == base_body {
             self.save_note(id, title, body)?;
             return Ok(None);
@@ -835,7 +872,7 @@ impl Store {
             }
         };
         self.save_note(id, &title, &body)?;
-        Ok(Some(self.note(id)?))
+        Ok(Some(self.load_note(id)?))
     }
 
     fn save_conflict_copy(&mut self, note: &Note) -> Result<ObjectId> {
@@ -854,7 +891,7 @@ impl Store {
     /// Replaces a note's tags (trimmed, empty ones dropped, de-duplicated
     /// ignoring case, order kept).
     pub fn set_tags(&mut self, id: &ObjectId, tags: &[String]) -> Result<()> {
-        let old = self.note(id)?;
+        let old = self.load_note(id)?;
         let tags = clean_tags(tags);
         if tags == old.tags {
             return Ok(());
@@ -878,7 +915,7 @@ impl Store {
     /// Puts a note on the Later list (with an optional due date, `YYYY-MM-DD`)
     /// or takes it off (`later = false`, which also clears the due date).
     pub fn set_later(&mut self, id: &ObjectId, later: bool, due_date: Option<&str>) -> Result<()> {
-        let old = self.note(id)?;
+        let old = self.load_note(id)?;
         reject_reply(&self.conn, id)?;
         let due_date = match (later, due_date) {
             (true, Some(d)) => Some(valid_date(d)?),
@@ -906,7 +943,7 @@ impl Store {
         let mut stmt = self.conn.prepare_cached(&format!(
             "{HIDDEN_CTE}
              SELECT id, parent_id, title, created_at, updated_at, due_date FROM objects
-             WHERE later_at IS NOT NULL AND kind = 2 AND id NOT IN hidden
+             WHERE later_at IS NOT NULL AND kind = 2 AND id NOT IN hidden AND id NOT IN locked
              ORDER BY due_date IS NULL, due_date, created_at DESC, id"
         ))?;
         Ok(stmt
@@ -925,6 +962,7 @@ impl Store {
 
     /// Earlier versions of a note, newest first.
     pub fn history(&self, id: &ObjectId) -> Result<Vec<HistoryEntry>> {
+        self.check_unlocked(id)?;
         let mut stmt = self.conn.prepare_cached(
             "SELECT saved_at, title, body FROM history WHERE object_id = ?1 ORDER BY saved_at DESC",
         )?;
@@ -946,7 +984,7 @@ impl Store {
             .into_iter()
             .find(|v| v.saved_at == saved_at)
             .ok_or(StoreError::NoSuchVersion(*id, saved_at))?;
-        let current = self.note(id)?;
+        let current = self.load_note(id)?;
         let tx = self.conn.savepoint()?;
         // Always keep what is being replaced, regardless of the interval.
         tx.execute(
@@ -974,7 +1012,7 @@ impl Store {
              FROM notes_fts
              JOIN objects o ON o.seq = notes_fts.rowid
              LEFT JOIN objects p ON p.id = o.parent_id AND p.kind = 2
-             WHERE notes_fts MATCH ?1 AND o.id NOT IN hidden
+             WHERE notes_fts MATCH ?1 AND o.id NOT IN hidden AND o.id NOT IN locked
              ORDER BY bm25(notes_fts, 10.0, 1.0, 5.0)
              LIMIT ?2"
         ))?;
@@ -1002,7 +1040,7 @@ impl Store {
              FROM note_bodies b
              JOIN objects o ON o.seq = b.seq
              LEFT JOIN objects p ON p.id = o.parent_id AND p.kind = 2
-             WHERE instr(b.body, ?1) > 0 AND o.id NOT IN hidden
+             WHERE instr(b.body, ?1) > 0 AND o.id NOT IN hidden AND o.id NOT IN locked
                AND coalesce(p.id, o.id) <> ?2
              ORDER BY title COLLATE NOCASE, note"
         ))?;
@@ -1017,10 +1055,116 @@ impl Store {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    // ---- Folder passwords ---------------------------------------------
+
+    /// Fails with [`StoreError::FolderLocked`] if `id` is inside a folder
+    /// whose password hasn't been entered.
+    fn check_unlocked(&self, id: &ObjectId) -> Result<()> {
+        let locked: bool = self
+            .conn
+            .prepare_cached(&format!(
+                "{HIDDEN_CTE} SELECT EXISTS (SELECT 1 FROM locked WHERE id = ?1)"
+            ))?
+            .query_row([id], |r| r.get(0))?;
+        if locked {
+            return Err(StoreError::FolderLocked(*id));
+        }
+        Ok(())
+    }
+
+    fn folder_lock(&self, id: &ObjectId) -> Result<Option<FolderLock>> {
+        if self.kind(id)? != Kind::Folder {
+            return Err(StoreError::NotAFolder(*id));
+        }
+        let json: Option<String> =
+            self.conn
+                .query_row("SELECT lock FROM objects WHERE id = ?1", [id], |r| r.get(0))?;
+        Ok(json.and_then(|j| serde_json::from_str(&j).ok()))
+    }
+
+    /// Sets, changes (`current` = the password now) or removes (`new` =
+    /// None) a folder's password. A folder that gets a password is locked
+    /// right away.
+    pub fn set_folder_password(
+        &mut self,
+        id: &ObjectId,
+        current: Option<&str>,
+        new: Option<&str>,
+    ) -> Result<()> {
+        if let Some(lock) = self.folder_lock(id)?
+            && !current.is_some_and(|c| lock.verify(c))
+        {
+            return Err(StoreError::WrongFolderPassword);
+        }
+        let lock = match new {
+            Some(password) => Some(FolderLock::new(password).ok_or(StoreError::EmptyPassword)?),
+            None => None,
+        };
+        self.write_folder_lock(id, lock.as_ref())
+    }
+
+    /// Removes a folder's password without asking for it, for when it's
+    /// forgotten: the caller must have checked the notebook passphrase.
+    pub fn clear_folder_password(&mut self, id: &ObjectId) -> Result<()> {
+        if self.folder_lock(id)?.is_none() {
+            return Ok(());
+        }
+        self.write_folder_lock(id, None)
+    }
+
+    fn write_folder_lock(&mut self, id: &ObjectId, lock: Option<&FolderLock>) -> Result<()> {
+        let now = self.now();
+        let json = lock.map(|l| serde_json::to_string(l).expect("lock serializes"));
+        let tx = self.conn.savepoint()?;
+        tx.execute(
+            "UPDATE objects SET lock = ?2 WHERE id = ?1",
+            params![id, json],
+        )?;
+        tx.execute("DELETE FROM temp.unlocked_folders WHERE id = ?1", [id])?;
+        changed(&tx, id, now, &self.device, &[Field::Lock])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Shows a folder's contents until it's locked again or the notebook
+    /// is closed.
+    pub fn unlock_folder(&self, id: &ObjectId, password: &str) -> Result<()> {
+        let Some(lock) = self.folder_lock(id)? else {
+            return Ok(());
+        };
+        if !lock.verify(password) {
+            return Err(StoreError::WrongFolderPassword);
+        }
+        self.conn.execute(
+            "INSERT OR IGNORE INTO temp.unlocked_folders (id) VALUES (?1)",
+            [id],
+        )?;
+        Ok(())
+    }
+
+    pub fn lock_folder(&self, id: &ObjectId) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM temp.unlocked_folders WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Names of folders with a password not entered yet (also in the trash).
+    pub fn locked_folders(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT title FROM objects
+             WHERE lock IS NOT NULL AND id NOT IN temp.unlocked_folders
+             ORDER BY title COLLATE NOCASE",
+        )?;
+        Ok(stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     // ---- Threads ------------------------------------------------------
 
     /// The replies in a note's thread, oldest first.
     pub fn replies(&self, note_id: &ObjectId) -> Result<Vec<Reply>> {
+        self.check_unlocked(note_id)?;
         let mut stmt = self.conn.prepare_cached(
             "SELECT o.id, b.body, o.created_at, o.updated_at
              FROM objects o JOIN note_bodies b ON b.seq = o.seq
@@ -1159,6 +1303,8 @@ fn tree_item(r: &Row<'_>) -> rusqlite::Result<TreeItem> {
         updated_at: r.get(5)?,
         trashed_at: r.get(6)?,
         replies: r.get(7)?,
+        protected: r.get(8)?,
+        locked: r.get(9)?,
     })
 }
 

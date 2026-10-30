@@ -5,6 +5,7 @@
   import Editor from '../editor/Editor.svelte'
   import { keys, phone, touch } from '../platform'
   import SearchPalette from '../SearchPalette.svelte'
+  import FolderPasswordDialog from '../sidebar/FolderPasswordDialog.svelte'
   import MoveDialog from '../sidebar/MoveDialog.svelte'
   import Sidebar from '../sidebar/Sidebar.svelte'
   import SettingsView from '../SettingsView.svelte'
@@ -155,6 +156,11 @@
 {/if}
 {#if app.movingId}
   <MoveDialog id={app.movingId} />
+{/if}
+{#if app.folderPassword}
+  {#key app.folderPassword}
+    <FolderPasswordDialog id={app.folderPassword.id} mode={app.folderPassword.mode} />
+  {/key}
 {/if}
 
 <style>

@@ -109,7 +109,8 @@ impl Store {
             .conn
             .query_row(
                 "SELECT o.kind, o.parent_id, o.title, o.sort_key, coalesce(b.body, ''), o.tags,
-                        o.created_at, o.updated_at, o.trashed_at, o.later_at, o.due_date, o.clocks
+                        o.created_at, o.updated_at, o.trashed_at, o.later_at, o.due_date, o.clocks,
+                        o.lock
                  FROM objects o LEFT JOIN note_bodies b ON b.seq = o.seq WHERE o.id = ?1",
                 [id],
                 |r| {
@@ -126,6 +127,7 @@ impl Store {
                         r.get::<_, Option<i64>>(9)?,
                         r.get::<_, Option<String>>(10)?,
                         r.get::<_, String>(11)?,
+                        r.get::<_, Option<String>>(12)?,
                     ))
                 },
             )
@@ -143,6 +145,7 @@ impl Store {
             later_at,
             due_date,
             clocks,
+            lock,
         )) = row
         else {
             return Ok(None);
@@ -163,6 +166,7 @@ impl Store {
             later_at,
             due_date,
             attachments,
+            lock: lock.and_then(|l| serde_json::from_str(&l).ok()),
             clocks: serde_json::from_str::<Clocks>(&clocks).unwrap_or_default(),
         }))
     }
@@ -442,7 +446,7 @@ impl Store {
         let now = self.now();
         // Text that sync replaces stays in history (same rule as local
         // edits), so another device's change can be undone here.
-        let old = match self.note(&payload.id) {
+        let old = match self.load_note(&payload.id) {
             Ok(note) => Some(note),
             Err(StoreError::NotFound(_) | StoreError::NotANote(_)) => None,
             Err(e) => return Err(e),
@@ -470,16 +474,21 @@ impl Store {
         } else {
             let tags = serde_json::to_string(&payload.tags).expect("tags serialize");
             let clocks = serde_json::to_string(&payload.clocks).expect("clocks serialize");
+            let lock = payload
+                .lock
+                .as_ref()
+                .map(|l| serde_json::to_string(l).expect("lock serializes"));
             tx.execute(
                 "INSERT INTO objects (id, kind, parent_id, title, sort_key, tags, created_at,
-                                      updated_at, trashed_at, later_at, due_date, clocks)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                                      updated_at, trashed_at, later_at, due_date, clocks, lock)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                  ON CONFLICT (id) DO UPDATE SET
                      kind = excluded.kind, parent_id = excluded.parent_id, title = excluded.title,
                      sort_key = excluded.sort_key, tags = excluded.tags,
                      created_at = excluded.created_at, updated_at = excluded.updated_at,
                      trashed_at = excluded.trashed_at, later_at = excluded.later_at,
-                     due_date = excluded.due_date, clocks = excluded.clocks",
+                     due_date = excluded.due_date, clocks = excluded.clocks,
+                     lock = excluded.lock",
                 params![
                     payload.id,
                     payload.kind.code(),
@@ -492,7 +501,8 @@ impl Store {
                     payload.trashed_at,
                     payload.later_at,
                     payload.due_date,
-                    clocks
+                    clocks,
+                    lock
                 ],
             )?;
             if payload.kind == Kind::Note {

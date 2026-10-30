@@ -129,10 +129,16 @@ payload is JSON:
     "later_at": null,
     "due_date": "YYYY-MM-DD" | null,
     "attachments": [{ "id": "<blob id>", "size": 123, "mime": "image/png" }],
+    "lock": { "kdf": "argon2id", "params": { "m_kib": 19456, "t": 2, "p": 1 },
+              "salt": "<base64url>", "hash": "<base64url>" },
     "clocks": { "title": { "at": 0, "d": "<device id>" }, "...": "…" }
   }
 }
 ```
+
+- `lock` (folders only, left out when unset): the folder's password as an
+  Argon2id hash. It only hides the folder in the app; the contents are
+  encrypted like everything else, so readers can ignore it.
 
 - Times are unix milliseconds. A **reply** is a note whose `parent_id` is a
   note. `deleted: true` is a tombstone: the object was deleted for good.

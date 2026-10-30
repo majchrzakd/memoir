@@ -35,6 +35,8 @@ interface Obj {
   trashed_at: number | null
   later_at: number | null
   due_date: string | null
+  /** A folder's password (the real store keeps only a hash). */
+  password?: string
 }
 
 const MOCK_PASSPHRASE = 'correct horse'
@@ -44,6 +46,8 @@ let mockPassphrase = MOCK_PASSPHRASE
 export function createMockApi(): Api {
   const objects = new Map<Id, Obj>()
   const history = new Map<Id, HistoryEntry[]>()
+  /** Folders whose password was entered (until the notebook locks). */
+  const unlockedFolders = new Set<Id>()
   // Attachment id → object URL of the file.
   const attachments = new Map<string, string>()
   let lastSynced: number | null = null
@@ -132,7 +136,12 @@ export function createMockApi(): Api {
     return o
   }
 
+  /** In the trash, or inside a folder with a password not entered yet. */
   function hidden(o: Obj): boolean {
+    return inTrash(o) || lockedAway(o)
+  }
+
+  function inTrash(o: Obj): boolean {
     for (
       let cur: Obj | undefined = o;
       cur;
@@ -141,6 +150,27 @@ export function createMockApi(): Api {
       if (cur.trashed_at !== null) return true
     }
     return false
+  }
+
+  function lockedAway(o: Obj): boolean {
+    for (
+      let cur = o.parent_id ? objects.get(o.parent_id) : undefined;
+      cur;
+      cur = cur.parent_id ? objects.get(cur.parent_id) : undefined
+    ) {
+      if (isLocked(cur)) return true
+    }
+    return false
+  }
+
+  function isLocked(o: Obj): boolean {
+    return o.password !== undefined && !unlockedFolders.has(o.id)
+  }
+
+  function folder(id: Id): Obj {
+    const o = get(id)
+    if (o.kind !== 'folder') throw `${id} is not a folder`
+    return o
   }
 
   function siblings(parent: Id | null, except?: Id): Obj[] {
@@ -229,6 +259,8 @@ export function createMockApi(): Api {
       updated_at,
       trashed_at,
       replies,
+      protected: o.password !== undefined,
+      locked: isLocked(o),
     }
   }
 
@@ -349,7 +381,27 @@ export function createMockApi(): Api {
     async finishSetup() {
       status = 'unlocked'
     },
+    async setFolderPassword(id, current, password) {
+      const f = folder(id)
+      if (f.password !== undefined && current !== f.password) throw 'wrong folder password'
+      if (password === '') throw "the password can't be empty"
+      f.password = password ?? undefined
+      unlockedFolders.delete(id)
+    },
+    async unlockFolder(id, password) {
+      const f = folder(id)
+      if (f.password !== undefined && password !== f.password) throw 'wrong folder password'
+      unlockedFolders.add(id)
+    },
+    async lockFolder(id) {
+      unlockedFolders.delete(id)
+    },
+    async forgetFolderPassword(id, passphrase) {
+      if (passphrase !== MOCK_PASSPHRASE && passphrase !== mockPassphrase) throw 'wrong passphrase'
+      folder(id).password = undefined
+    },
     async lock() {
+      unlockedFolders.clear()
       status = 'locked'
     },
     async changePassphrase(current, newPassphrase) {
@@ -389,7 +441,11 @@ export function createMockApi(): Api {
     async trashedItems() {
       return [...objects.values()]
         .filter(
-          (o) => o.trashed_at !== null && !isReply(o) && !(o.parent_id && hidden(get(o.parent_id))),
+          (o) =>
+            o.trashed_at !== null &&
+            !isReply(o) &&
+            !lockedAway(o) &&
+            !(o.parent_id && inTrash(get(o.parent_id))),
         )
         .sort((a, b) => (b.trashed_at ?? 0) - (a.trashed_at ?? 0))
         .map(toItem)
@@ -440,6 +496,7 @@ export function createMockApi(): Api {
     async note(id): Promise<Note> {
       const o = get(id)
       if (o.kind !== 'note') throw `${id} is not a note`
+      if (lockedAway(o)) throw 'this is in a locked folder; unlock the folder first'
       const { id: noteId, parent_id, title, body, tags, created_at, updated_at, trashed_at } = o
       const { later_at, due_date } = o
       return {

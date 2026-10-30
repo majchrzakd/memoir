@@ -19,6 +19,8 @@ import { ancestorIds, childrenMap, visibleRows } from './tree'
 
 type Screen = 'loading' | Status
 type View = 'note' | 'trash' | 'settings'
+/** What the folder password dialog asks for; `forgot` removes it with the notebook passphrase. */
+export type FolderPasswordMode = 'unlock' | 'set' | 'change' | 'remove' | 'forgot'
 
 /** Window event: sync brought changes (e.g. images that were missing). */
 export const SYNCED_EVENT = 'memoir-synced'
@@ -235,6 +237,7 @@ class App {
     this.replyDrafts.clear()
     this.searchOpen = false
     this.movingId = null
+    this.folderPassword = null
     this.confirmRequest?.resolve(false)
     this.attachmentMenu = null
     this.linkingEditor = null
@@ -355,6 +358,11 @@ class App {
   // ---- Tree state --------------------------------------------------------
 
   toggle(id: Id, open = !this.expanded.has(id)) {
+    // A locked folder asks for its password first (and opens once unlocked).
+    if (open && this.byId.get(id)?.locked) {
+      this.folderPassword = { id, mode: 'unlock' }
+      return
+    }
     if (open) this.expanded.add(id)
     else this.expanded.delete(id)
     this.persistExpanded()
@@ -405,7 +413,9 @@ class App {
       await this.openNote(id).catch((e) => this.fail(e))
     } else {
       this.fail(
-        item ? 'That link points at a folder.' : 'The linked note was deleted or is in the trash.',
+        item
+          ? 'That link points at a folder.'
+          : 'The linked note was deleted, is in the trash, or is in a locked folder.',
       )
     }
   }
@@ -520,6 +530,57 @@ class App {
       await this.refreshTree()
       this.selectedId = this.rows[Math.min(index, this.rows.length - 1)]?.item.id ?? null
     })
+  }
+
+  // ---- Folder passwords ----------------------------------------------------
+
+  /** The folder password dialog (null: closed). */
+  folderPassword = $state<{ id: Id; mode: FolderPasswordMode } | null>(null)
+
+  /** Saves and closes the open note if it's inside `folder`, which is about to lock. */
+  private async leaveFolder(folder: Id) {
+    const open = this.openNoteId
+    if (open && ancestorIds(this.byId, open).includes(folder)) {
+      await this.flushEditor()
+      this.openNoteId = null
+    }
+  }
+
+  /** Throws on a wrong password, for the dialog to show. */
+  async unlockFolder(id: Id, password: string) {
+    await api.unlockFolder(id, password)
+    this.folderPassword = null
+    await this.refreshTree()
+    this.toggle(id, true)
+    this.laterChanged()
+  }
+
+  async lockFolder(id: Id) {
+    await this.run(async () => {
+      await this.leaveFolder(id)
+      await api.lockFolder(id)
+      this.toggle(id, false)
+      await this.refreshTree()
+      this.laterChanged()
+    })
+  }
+
+  /** Sets, changes or (`password` null) removes a folder's password. Throws for the dialog. */
+  async setFolderPassword(id: Id, current: string | null, password: string | null) {
+    if (password !== null) await this.leaveFolder(id)
+    await api.setFolderPassword(id, current, password)
+    this.folderPassword = null
+    if (password !== null) this.toggle(id, false)
+    await this.refreshTree()
+    this.laterChanged()
+  }
+
+  /** Removes a forgotten folder password with the notebook passphrase. Throws for the dialog. */
+  async forgetFolderPassword(id: Id, passphrase: string) {
+    await api.forgetFolderPassword(id, passphrase)
+    this.folderPassword = null
+    await this.refreshTree()
+    this.laterChanged()
   }
 
   /** Runs an action, reporting failures instead of throwing. */

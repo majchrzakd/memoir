@@ -27,6 +27,16 @@ pub fn export_notebook<R: Runtime>(
     state: State<'_, AppState>,
     name: String,
 ) -> Result<Option<Exported>, String> {
+    // The export is everything, in the clear: a folder password must not be
+    // a way around it.
+    let locked = state.with_store(|s| s.locked_folders())?;
+    if !locked.is_empty() {
+        let names: Vec<String> = locked.iter().map(|n| format!("“{n}”")).collect();
+        return Err(format!(
+            "Unlock the folders with a password first ({}), so the export can include them.",
+            names.join(", ")
+        ));
+    }
     let Some(parent) = pick_folder(&app)? else {
         return Ok(None);
     };

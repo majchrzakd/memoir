@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { Id, Placement } from '../api'
-  import { app } from '../app.svelte'
+  import type { Id, Placement, TreeItem } from '../api'
+  import { app, type FolderPasswordMode } from '../app.svelte'
   import { keys, touch } from '../platform'
   import { fullTime, shortTime } from '../time'
   import { displayTitle, dropTarget, type DropZone, type Row } from '../tree'
@@ -120,6 +120,19 @@
   /** A shortcut to show in the menu; none on touch screens. */
   const hint = (shortcut: string) => (touch.current ? undefined : shortcut)
 
+  /** Folder password actions, by whether the folder has one and it's entered. */
+  function passwordItems(item: TreeItem): MenuItem[] {
+    const ask = (mode: FolderPasswordMode) => () => (app.folderPassword = { id: item.id, mode })
+    if (!item.protected) return [{ label: 'Set password…', separator: true, action: ask('set') }]
+    return [
+      item.locked
+        ? { label: 'Unlock…', separator: true, action: ask('unlock') }
+        : { label: 'Lock now', separator: true, action: () => app.lockFolder(item.id) },
+      ...(item.locked ? [] : [{ label: 'Change password…', action: ask('change') }]),
+      { label: 'Remove password…', action: ask('remove') },
+    ]
+  }
+
   function openMenu(row: Row | null, x: number, y: number) {
     const rect = viewport?.getBoundingClientRect()
     const at = { x: (rect?.left ?? 0) + x, y: (rect?.top ?? 0) + y }
@@ -137,12 +150,14 @@
     } else {
       app.selectedId = item.id
       items = [
-        ...(item.kind === 'folder'
-          ? [
-              { label: 'New note here', action: () => app.newNote(item.id) },
-              { label: 'New folder here', action: () => app.newFolder(item.id) },
-            ]
-          : [{ label: 'Open', action: () => app.openNote(item.id) }]),
+        ...(item.kind === 'note'
+          ? [{ label: 'Open', action: () => app.openNote(item.id) }]
+          : item.locked
+            ? []
+            : [
+                { label: 'New note here', action: () => app.newNote(item.id) },
+                { label: 'New folder here', action: () => app.newFolder(item.id) },
+              ]),
         { label: 'Rename', shortcut: hint('F2'), action: () => (app.renamingId = item.id) },
         { label: 'Move to…', action: () => (app.movingId = item.id) },
         {
@@ -151,6 +166,7 @@
           danger: true,
           action: () => app.trash(item.id),
         },
+        ...(item.kind === 'folder' ? passwordItems(item) : []),
       ]
     }
     menu = { ...at, items }
@@ -176,7 +192,8 @@
     e.preventDefault()
     if (drop?.id !== row.item.id || drop.zone !== target.zone) {
       clearTimeout(hoverTimer)
-      if (target.zone === 'inside' && !row.expanded) {
+      // Not into a locked folder: that would ask for its password mid-drag.
+      if (target.zone === 'inside' && !row.expanded && !row.item.locked) {
         hoverTimer = setTimeout(() => app.toggle(row.item.id, true), EXPAND_ON_HOVER_MS)
       }
     }
@@ -260,7 +277,7 @@
             <button
               class="chevron"
               class:expanded={row.expanded}
-              class:empty={!row.hasChildren}
+              class:empty={!row.hasChildren && !item.locked}
               tabindex="-1"
               aria-label={row.expanded ? 'Collapse' : 'Expand'}
               onclick={(e) => {
@@ -295,6 +312,24 @@
             />
           {:else}
             <span class="title" class:untitled={!item.title.trim()}>{displayTitle(item)}</span>
+            {#if item.locked}
+              <span class="lock" title="Locked: open it to enter the password">
+                <Icon name="lock" size={13} />
+              </span>
+            {:else if item.protected}
+              <button
+                class="lock"
+                tabindex="-1"
+                title="Lock this folder"
+                aria-label="Lock this folder"
+                onclick={(e) => {
+                  e.stopPropagation()
+                  void app.lockFolder(item.id)
+                }}
+              >
+                <Icon name="unlock" size={13} />
+              </button>
+            {/if}
             {#if item.replies > 0}
               <span
                 class="replies"
@@ -429,6 +464,15 @@
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .lock {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    border: none;
+    background: none;
   }
 
   .replies {

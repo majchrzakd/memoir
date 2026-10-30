@@ -25,6 +25,8 @@ const item = (
   updated_at: 0,
   trashed_at: null,
   replies: 0,
+  protected: false,
+  locked: false,
 })
 
 // Work/

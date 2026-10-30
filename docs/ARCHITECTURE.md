@@ -169,6 +169,29 @@ without the keychain entry / passphrase.
   ignored. Until a device has synced once, it still opens with the old
   passphrase (and the old recovery key still works there).
 
+### Folder passwords
+A folder can have its own password (right-click → Set password…). It's a
+lock screen, not more encryption: the contents are encrypted like the rest
+of the notebook, and the notebook passphrase can remove the password
+("Forgot the password?"). It keeps notes away from someone using an
+unlocked Memoir, not from someone with the passphrase.
+- The folder stores an Argon2id hash (`store::FolderLock`; 19 MiB, 2
+  passes — cheap, since guessing it needs the notebook key, which opens
+  the contents anyway). It syncs as the folder's `lock` field with its own
+  clock, so every device asks for it.
+- Entered passwords live in a TEMP table of the database connection, so
+  closing the notebook (lock, quit, switching workspace) locks every folder
+  again. Until then a folder stays open; the lock icon next to it, or
+  "Lock now", closes it earlier.
+- While locked, everything inside (at any depth, trash included) is left
+  out of the tree, the trash, search, Later and backlinks, and reading a
+  note, its replies or history fails (`StoreError::FolderLocked`). Sync,
+  changes and `memoir decrypt` aren't affected. The app's export refuses to
+  run until locked folders are opened, so it can't be a way around them.
+- Memoir versions before folder passwords ignore the field. If such a
+  version edits a protected folder (rename, move, trash), its upload drops
+  the password, so update every device before using them.
+
 ---
 
 ## 5. Local storage

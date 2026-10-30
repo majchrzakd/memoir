@@ -29,7 +29,10 @@ impl AppState {
             .map_err(|_| "internal error: session lock poisoned".to_string())
     }
 
-    fn with_store<T>(&self, f: impl FnOnce(&mut Store) -> Result<T, StoreError>) -> CmdResult<T> {
+    pub(crate) fn with_store<T>(
+        &self,
+        f: impl FnOnce(&mut Store) -> Result<T, StoreError>,
+    ) -> CmdResult<T> {
         let mut session = self.session()?;
         let store = session.store().map_err(|e| e.to_string())?;
         f(store).map_err(|e| e.to_string())
@@ -146,6 +149,43 @@ pub fn tree(state: State<'_, AppState>) -> CmdResult<Vec<TreeItem>> {
 #[tauri::command(async)]
 pub fn trashed_items(state: State<'_, AppState>) -> CmdResult<Vec<TreeItem>> {
     state.with_store(|s| s.trashed_items())
+}
+
+// ---- Folder passwords (see memoir_core::store::FolderLock) ------------
+
+/// Sets, changes or (`password` = None) removes a folder's password.
+#[tauri::command(async)]
+pub fn set_folder_password(
+    state: State<'_, AppState>,
+    id: ObjectId,
+    current: Option<String>,
+    password: Option<String>,
+) -> CmdResult<()> {
+    state.change(|s| s.set_folder_password(&id, current.as_deref(), password.as_deref()))
+}
+
+#[tauri::command(async)]
+pub fn unlock_folder(state: State<'_, AppState>, id: ObjectId, password: String) -> CmdResult<()> {
+    state.with_store(|s| s.unlock_folder(&id, &password))
+}
+
+#[tauri::command(async)]
+pub fn lock_folder(state: State<'_, AppState>, id: ObjectId) -> CmdResult<()> {
+    state.with_store(|s| s.lock_folder(&id))
+}
+
+/// Removes a forgotten folder password, given the notebook passphrase.
+#[tauri::command(async)]
+pub fn forget_folder_password(
+    state: State<'_, AppState>,
+    id: ObjectId,
+    passphrase: String,
+) -> CmdResult<()> {
+    state
+        .session()?
+        .check_passphrase(&passphrase)
+        .map_err(|e| e.to_string())?;
+    state.change(|s| s.clear_folder_password(&id))
 }
 
 #[tauri::command(async)]

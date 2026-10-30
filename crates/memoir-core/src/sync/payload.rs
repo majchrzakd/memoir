@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::store::{Kind, ObjectId};
+use crate::store::{FolderLock, Kind, ObjectId};
 
 /// When and where a field last changed. Ordered by time, then device id, so
 /// every device picks the same winner.
@@ -11,6 +11,12 @@ pub struct Clock {
     pub at: i64,
     #[serde(rename = "d")]
     pub device: String,
+}
+
+impl Clock {
+    fn is_unset(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,6 +29,10 @@ pub struct Clocks {
     pub tags: Clock,
     pub trashed: Clock,
     pub later: Clock,
+    /// Left out while unset, so objects without a password are written as
+    /// before.
+    #[serde(skip_serializing_if = "Clock::is_unset")]
+    pub lock: Clock,
     pub deleted: Clock,
 }
 
@@ -36,6 +46,7 @@ impl Clocks {
             &self.tags,
             &self.trashed,
             &self.later,
+            &self.lock,
         ]
         .into_iter()
         .max()
@@ -50,6 +61,7 @@ impl Clocks {
             || self.tags > seen.tags
             || self.trashed > seen.trashed
             || self.later > seen.later
+            || self.lock > seen.lock
     }
 
     /// Each field's clock becomes the later of `a`'s and `b`'s.
@@ -61,6 +73,7 @@ impl Clocks {
         self.tags = later(&a.tags, &b.tags);
         self.trashed = later(&a.trashed, &b.trashed);
         self.later = later(&a.later, &b.later);
+        self.lock = later(&a.lock, &b.lock);
         self.deleted = later(&a.deleted, &b.deleted);
     }
 }
@@ -96,6 +109,9 @@ pub struct ObjectPayload {
     /// Attachments the body refers to, so other devices can fetch them.
     #[serde(default)]
     pub attachments: Vec<AttachmentRef>,
+    /// A folder's password (its hash; see `FolderLock`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<FolderLock>,
     #[serde(default)]
     pub clocks: Clocks,
 }
@@ -193,6 +209,10 @@ pub fn merge(base: Option<&ObjectPayload>, a: &ObjectPayload, b: &ObjectPayload)
         out.due_date.clone_from(&b.due_date);
         out.clocks.later = b.clocks.later.clone();
     }
+    if b.clocks.lock > a.clocks.lock {
+        out.lock.clone_from(&b.lock);
+        out.clocks.lock = b.clocks.lock.clone();
+    }
     out.clocks.deleted = a.clocks.deleted.clone().max(b.clocks.deleted.clone());
     out.created_at = a.created_at.min(b.created_at);
     out.updated_at = a.updated_at.max(b.updated_at);
@@ -237,6 +257,7 @@ fn differs(a: &ObjectPayload, b: &ObjectPayload) -> bool {
         || a.trashed_at != b.trashed_at
         || a.later_at != b.later_at
         || a.due_date != b.due_date
+        || a.lock != b.lock
 }
 
 /// The losing text as its own note, next to the original. Its id depends
@@ -266,6 +287,7 @@ fn conflict_copy_of(loser: &ObjectPayload, merged: &ObjectPayload) -> ObjectPayl
         later_at: None,
         due_date: None,
         attachments: loser.attachments.clone(),
+        lock: None,
         clocks: Clocks {
             title: clock.clone(),
             body: clock.clone(),
@@ -273,6 +295,7 @@ fn conflict_copy_of(loser: &ObjectPayload, merged: &ObjectPayload) -> ObjectPayl
             tags: clock.clone(),
             trashed: clock.clone(),
             later: clock,
+            lock: Clock::default(),
             deleted: Clock::default(),
         },
     }
@@ -337,6 +360,7 @@ mod tests {
             later_at: None,
             due_date: None,
             attachments: vec![],
+            lock: None,
             clocks: Clocks {
                 title: c.clone(),
                 body: c.clone(),
@@ -344,6 +368,7 @@ mod tests {
                 tags: c.clone(),
                 trashed: c.clone(),
                 later: c,
+                lock: Clock::default(),
                 deleted: Clock::default(),
             },
         }

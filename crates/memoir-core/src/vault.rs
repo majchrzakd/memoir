@@ -328,11 +328,11 @@ fn new_passphrase(passphrase: &str) -> Result<Zeroizing<String>> {
 
 /// NFC-normalizes so the same passphrase typed on different systems (macOS
 /// tends to produce decomposed accents) derives the same key.
-fn normalize(passphrase: &str) -> Zeroizing<String> {
+pub(crate) fn normalize(passphrase: &str) -> Zeroizing<String> {
     Zeroizing::new(passphrase.nfc().collect())
 }
 
-fn derive_kek(passphrase: &str, salt: &[u8], params: KdfParams) -> Result<SecretKey> {
+pub(crate) fn derive_kek(passphrase: &str, salt: &[u8], params: KdfParams) -> Result<SecretKey> {
     let mut out = Zeroizing::new([0u8; KEY_LEN]);
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params.validate()?)
         .hash_password_into(passphrase.as_bytes(), salt, &mut out[..])

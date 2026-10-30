@@ -17,6 +17,10 @@ export interface TreeItem {
   trashed_at: number | null
   /** Number of replies in the note's thread (0 for folders). */
   replies: number
+  /** A folder with a password. */
+  protected: boolean
+  /** A folder with a password not entered yet: its contents are left out of the tree. */
+  locked: boolean
 }
 
 export interface Note {
@@ -140,6 +144,16 @@ export interface Api {
 
   tree(): Promise<TreeItem[]>
   trashedItems(): Promise<TreeItem[]>
+  /**
+   * Sets, changes (`current`: the password now) or removes (`password`: null)
+   * a folder's password. A folder that gets one is locked right away.
+   */
+  setFolderPassword(id: Id, current: string | null, password: string | null): Promise<void>
+  /** Shows a locked folder's contents until it's locked again or the notebook locks. */
+  unlockFolder(id: Id, password: string): Promise<void>
+  lockFolder(id: Id): Promise<void>
+  /** Removes a forgotten folder password, given the notebook passphrase. */
+  forgetFolderPassword(id: Id, passphrase: string): Promise<void>
   createFolder(placement: Placement, name: string): Promise<Id>
   createNote(placement: Placement, title: string): Promise<Id>
   rename(id: Id, title: string): Promise<void>
