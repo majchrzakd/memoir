@@ -108,12 +108,19 @@ signed with the project's update key; the public half is
      `google_keys.txt`
 
 ### Each release
-1. Set the new version in `app/src-tauri/tauri.conf.json` (`version`) and
-   in `Cargo.toml` (`workspace.package.version`), commit and push.
-2. GitHub → Actions → **Release** → Run workflow. It builds and signs on
-   Windows and macOS and creates a **draft** release `v<version>` with the
-   Windows installer, the Mac `.dmg` and `.app.tar.gz` (what updates
-   download), their `.sig` files and `latest.json`. An older draft for the
+1. Push what should go into the release.
+2. GitHub → Actions → **Release** → Run workflow, and choose the step:
+   **patch** (0.1.0 → 0.1.1, the default), **minor** (→ 0.2.0) or **major**
+   (→ 1.0.0), counted from the newest published release. The workflow sets
+   that version in `app/src-tauri/tauri.conf.json`, `Cargo.toml` and
+   `Cargo.lock` and commits it ("Version 0.1.1"), so pull afterwards. Running
+   it again before publishing keeps the version (no new commit) and replaces
+   the draft; a version set higher by hand is kept too.
+
+   It then builds and signs on Windows and macOS and creates a **draft**
+   release `v<version>` with the Windows installer, the Mac `.dmg` and
+   `.app.tar.gz` (what updates download), their `.sig` files and
+   `latest.json`. An older draft for the
    same version is replaced, so there's no need to delete it first, but
    don't delete the new draft while the run is going.
 3. Check the draft (add notes: they're shown in the update notice) and

@@ -5,9 +5,20 @@ name: Release
 # macOS app (one universal build for Apple silicon and Intel) into it, with
 # their update signatures and latest.json, which installed copies check for
 # updates. Review the draft, then publish it. See docs/RELEASE.md.
+#
+# The version is set here: one step past the newest published release
+# (patch, minor or major, as chosen when starting the run), committed to the
+# branch before building. Running it again before publishing keeps that
+# version and replaces its draft.
 
 on:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'New version: one step past the newest published release'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 permissions:
   contents: write
@@ -23,8 +34,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.draft.outputs.result }}
+      sha: ${{ steps.commit.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The version commit is rebased onto anything pushed meanwhile.
+          fetch-depth: 0
 
       - name: Check that the secrets are set
         env:
@@ -35,18 +50,81 @@ jobs:
           [ -n "$SIGNING_KEY" ] || { echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY repository secret"; exit 1; }
           ! grep -q REPLACE_WITH_UPDATE_PUBLIC_KEY app/src-tauri/tauri.conf.json || { echo "::error::Put the update public key (memoir.key.pub) into tauri.conf.json"; exit 1; }
 
+      # The newest published release + the chosen step. A version already set
+      # higher by hand (and not yet published) is kept.
+      - name: Set the version
+        uses: actions/github-script@v7
+        env:
+          BUMP: ${{ inputs.bump }}
+        with:
+          script: |
+            const fs = require('fs')
+            const parse = (v) => v.replace(/^v/, '').split('.').map(Number)
+            const valid = (p) => p.length === 3 && p.every(Number.isInteger)
+            const newer = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
+
+            const conf = 'app/src-tauri/tauri.conf.json'
+            const current = parse(JSON.parse(fs.readFileSync(conf, 'utf8')).version)
+            const releases = await github.paginate(github.rest.repos.listReleases, context.repo)
+            const published = releases
+              .filter((r) => !r.draft)
+              .map((r) => parse(r.tag_name))
+              .filter(valid)
+              .sort(newer)
+              .pop()
+
+            let next = current
+            if (published) {
+              const [major, minor, patch] = published
+              const step = {
+                patch: [major, minor, patch + 1],
+                minor: [major, minor + 1, 0],
+                major: [major + 1, 0, 0],
+              }[process.env.BUMP]
+              if (newer(current, step) < 0) next = step
+            }
+            const from = current.join('.')
+            const to = next.join('.')
+            core.info(`Newest published: ${published ? published.join('.') : 'none'}; version ${from} → ${to}`)
+            if (to === from) return
+
+            const replace = (file, pattern, text) => {
+              const before = fs.readFileSync(file, 'utf8')
+              const after = before.replace(pattern, text)
+              if (after === before) throw new Error(`No version found in ${file}`)
+              fs.writeFileSync(file, after)
+            }
+            replace(conf, /("version":\s*")[^"]+"/, `$1${to}"`)
+            replace('Cargo.toml', /(\[workspace\.package\]\s*\nversion = ")[^"]+"/, `$1${to}"`)
+            replace('Cargo.lock', /(name = "memoir-[a-z]+"\nversion = ")[^"]+"/g, `$1${to}"`)
+
+      - name: Commit the version
+        id: commit
+        run: |
+          if ! git diff --quiet; then
+            version=$(jq -r .version app/src-tauri/tauri.conf.json)
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "Version $version"
+            git pull --rebase origin "$GITHUB_REF_NAME"
+            git push origin "HEAD:refs/heads/$GITHUB_REF_NAME"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       # Always a fresh draft: an older one for this version may be from an
       # earlier workflow, or be deleted while this run builds.
       - name: Create the draft release (replacing an older draft)
         id: draft
         uses: actions/github-script@v7
+        env:
+          SHA: ${{ steps.commit.outputs.sha }}
         with:
           script: |
             const { version } = require('./app/src-tauri/tauri.conf.json')
             const tag = `v${version}`
             const releases = await github.paginate(github.rest.repos.listReleases, context.repo)
             if (releases.some((r) => !r.draft && r.tag_name === tag)) {
-              throw new Error(`${tag} is already published. Set a new version in app/src-tauri/tauri.conf.json and Cargo.toml.`)
+              throw new Error(`${tag} is already published.`)
             }
             for (const old of releases.filter((r) => r.draft && r.tag_name === tag)) {
               await github.rest.repos.deleteRelease({ ...context.repo, release_id: old.id })
@@ -55,7 +133,7 @@ jobs:
             const { data } = await github.rest.repos.createRelease({
               ...context.repo,
               tag_name: tag,
-              target_commitish: context.sha,
+              target_commitish: process.env.SHA,
               name: `Memoir ${version}`,
               body: [
                 `**Windows:** download and run **Memoir_${version}_x64-setup.exe**.`,
@@ -82,6 +160,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The commit with the new version.
+          ref: ${{ needs.draft.outputs.sha }}
 
       - uses: actions/setup-node@v4
         with:
