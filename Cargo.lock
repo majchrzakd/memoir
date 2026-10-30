@@ -2746,7 +2746,7 @@ dependencies = [
 
 [[package]]
 name = "memoir-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "memoir-core",
@@ -2769,7 +2769,7 @@ dependencies = [
 
 [[package]]
 name = "memoir-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "log",
@@ -2783,7 +2783,7 @@ dependencies = [
 
 [[package]]
 name = "memoir-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "apple-native-keyring-store",
  "argon2",
@@ -2816,7 +2816,7 @@ dependencies = [
 
 [[package]]
 name = "memoir-gdrive"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.4.3",
