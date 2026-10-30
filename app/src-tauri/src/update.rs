@@ -73,7 +73,14 @@ async fn check<R: Runtime>(app: &AppHandle<R>) -> Result<Option<UpdateInfo>, Str
         .map_err(|e| e.to_string())?
         .check()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| match e {
+            // GitHub answered, but has no `latest.json`: nothing is published
+            // yet (drafts don't count). Being offline is a different error.
+            tauri_plugin_updater::Error::ReleaseNotFound => {
+                "no release has been published on GitHub yet".to_owned()
+            }
+            e => e.to_string(),
+        })?;
     let found = update.as_ref().map(info);
     *app.state::<Updates>().pending.lock().expect("lock") = update;
     Ok(found)
