@@ -50,3 +50,17 @@ docs/ARCHITECTURE.md) in the same change. Keep entries short and say why.
 - iPhone builds go out through TestFlight: `app/scripts/ios-testflight.sh`
   builds, signs and uploads (`--no-upload` only exports the `.ipa`). Ask
   before uploading. Setup and pitfalls: docs/RELEASE.md, "iPhone".
+
+## Decisions
+
+- **iPhone distribution (2026-11-11):** TestFlight, not the App Store yet;
+  the user runs the TestFlight build on their iPhone. A build expires 90 days
+  after upload, so upload a new one at least that often.
+- **Encryption declaration** in App Store Connect: "standard encryption
+  algorithms instead of, or in addition to, Apple's" (ChaCha20-Poly1305,
+  Argon2, HKDF, rustls are built into the app), and not available in France,
+  which would need a French encryption declaration first.
+- **App Store, when it comes:** first version iPhone-only (no iPad
+  screenshots or iPad review), France left out (see above). EU trader status
+  and a public vs unlisted listing are the user's call. Finishing the iOS
+  share sheet export and attachments first lowers the risk of rejection.
