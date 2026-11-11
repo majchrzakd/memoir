@@ -23,13 +23,25 @@ docs/ARCHITECTURE.md) in the same change. Keep entries short and say why.
 
 ## Environment
 
-- `node` and `npm` are in `~/.local/node/bin`, which isn't on the shell's
-  PATH: `export PATH="$HOME/.local/node/bin:$PATH"`.
+- Node (`~/.local/node/bin`) and Rust (`~/.cargo/bin`) are installed in the
+  user folder and put on the PATH by `~/.zprofile`. A shell that doesn't
+  read it needs `export PATH="$HOME/.cargo/bin:$HOME/.local/node/bin:$PATH"`.
+- `build-app.sh` (Mac release build, git-ignored) holds the Google client ID
+  and secret: never commit it or quote its contents.
 - `npm run dev` (in `app/`) runs the UI in a browser against an in-memory
   mock with sample notes (`app/src/lib/api/mock.ts`; `?mock=first_run` /
   `?mock=locked` for the other screens).
 - Before a PR: `npm run verify` in `app/` (type check, lint, UI tests,
   rustfmt, clippy, Rust tests).
+- iOS builds (`tauri ios dev` / `build`) need `LANG=en_US.UTF-8`, or
+  CocoaPods fails. `Info.ios.plist` (URL schemes and the like) is merged
+  only when a dev run starts: restart `tauri ios dev` after changing it.
+- Xcode and Tauri rewrite `app/src-tauri/gen/apple` when they open or
+  regenerate the project; changes there that are only formatting can be
+  discarded.
+- The Simulator holds a synced copy of the user's real notebook, and its
+  passphrase is theirs to type: try UI changes in the browser mock at phone
+  size instead.
 - iPhone builds go out through TestFlight: `app/scripts/ios-testflight.sh`
   builds, signs and uploads (`--no-upload` only exports the `.ipa`). Ask
   before uploading. Setup and pitfalls: docs/RELEASE.md, "iPhone".
