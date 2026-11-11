@@ -1,4 +1,4 @@
-# Releasing Memoir (Windows and macOS)
+# Releasing Memoir (Windows, macOS and iPhone)
 
 ## Build the installer
 
@@ -129,6 +129,62 @@ signed with the project's update key; the public half is
 Builds made with `build-installer.bat` skip the update signature
 (`tauri.local-build.conf.json`), so they need no signing key. They still
 update themselves from GitHub releases like any installed copy.
+
+## iPhone (TestFlight)
+
+The iPhone app goes out through TestFlight. Each uploaded build works for
+90 days after its upload; a newer build replaces it on the phone (TestFlight
+can update it automatically) and keeps the app's data and Keychain.
+
+### One-time setup
+1. **Xcode account:** Xcode → Settings → Accounts, sign in with the Apple ID
+   of the developer team (`bundle.iOS.developmentTeam` in
+   `app/src-tauri/tauri.ios.conf.json`). The team must not be listed as a
+   "Personal Team" any more.
+2. **Register an iPhone once:** Xcode's automatic signing signs the archive
+   for development first, and that needs at least one device on the team,
+   even though TestFlight installs need none. Connect the iPhone with a
+   cable, unlock it, tap *Trust*, and turn on Developer Mode (Settings →
+   Privacy & Security → Developer Mode; the phone restarts). Connecting
+   alone doesn't register it; building for it does:
+   ```sh
+   xcrun devicectl list devices   # the iPhone's identifier (UDID)
+   cd app/src-tauri/gen/apple
+   xcodebuild -project memoir-app.xcodeproj -scheme memoir-app_iOS \
+     -configuration release -destination id=<UDID> \
+     -allowProvisioningUpdates -allowProvisioningDeviceRegistration build
+   ```
+   It registers the phone and creates the signing profile, then stops at
+   "Build Rust Code" (that step only runs under `tauri ios build`), which is
+   fine.
+3. **App record:** [App Store Connect](https://appstoreconnect.apple.com) →
+   Apps → **+** → New App: platform iOS, name Memoir, bundle ID
+   `com.memoir.notebook` (it's in the list once the first build has
+   registered it, or add it under Certificates, Identifiers & Profiles), any
+   SKU.
+4. **Testers:** the app → TestFlight → Internal Testing → **+**, add yourself.
+   Install the TestFlight app on the iPhone and accept the invitation.
+
+### Each build
+```sh
+app/scripts/ios-testflight.sh
+```
+It archives a release build, signs it for the App Store and uploads it. The
+build number is the build's date and time (`YYYYMMDDHHMM`), so every upload
+is newer than the last; the version shown is `version` from
+`tauri.conf.json`. `--no-upload` only exports
+`app/src-tauri/gen/apple/build/testflight/Memoir.ipa`.
+
+After Apple processes it (usually 5–15 minutes) the build shows up under
+TestFlight. The first time, App Store Connect asks about encryption
+(*Missing Compliance*): Memoir encrypts notebooks with ChaCha20-Poly1305
+(`memoir-core`), so answer that question for the build there; once it's
+settled, `ITSAppUsesNonExemptEncryption` in `Info.ios.plist` can skip the
+question for later builds.
+
+The iOS icon is drawn in `app/src-tauri/icons/memoir-ios.svg` (full-bleed
+and opaque: iOS rounds the corners, and App Store Connect rejects icons with
+an alpha channel). After changing it, run `app/scripts/ios-icons.sh`.
 
 ### Google sign-in out of "Testing"
 See [spikes/google-oauth.md](spikes/google-oauth.md) step 4. The homepage

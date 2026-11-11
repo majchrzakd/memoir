@@ -30,3 +30,6 @@ docs/ARCHITECTURE.md) in the same change. Keep entries short and say why.
   `?mock=locked` for the other screens).
 - Before a PR: `npm run verify` in `app/` (type check, lint, UI tests,
   rustfmt, clippy, Rust tests).
+- iPhone builds go out through TestFlight: `app/scripts/ios-testflight.sh`
+  builds, signs and uploads (`--no-upload` only exports the `.ipa`). Ask
+  before uploading. Setup and pitfalls: docs/RELEASE.md, "iPhone".

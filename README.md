@@ -34,7 +34,8 @@ npm run tauri ios dev "iPhone 17"   # build and run in that Simulator
 
 The Xcode project is in `app/src-tauri/gen/apple`. Running on a real iPhone
 needs an Apple developer team (`bundle.iOS.developmentTeam` in
-`tauri.conf.json`, or `APPLE_DEVELOPMENT_TEAM`).
+`tauri.ios.conf.json`, or `APPLE_DEVELOPMENT_TEAM`). TestFlight builds:
+`app/scripts/ios-testflight.sh`, see [docs/RELEASE.md](docs/RELEASE.md).
 
 To work on the UI alone, `npm run dev` and open <http://localhost:5173> in a
 browser: it runs against an in-memory mock backend with sample notes
