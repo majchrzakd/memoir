@@ -23,9 +23,9 @@
 <main>
   <p><a href="index.html">← Memoir</a></p>
   <h1>Privacy policy</h1>
-  <p class="updated">Last updated: 26 October 2026</p>
+  <p class="updated">Last updated: 11 November 2026</p>
 
-  <p>Memoir is a notebook app for your computer. This policy explains what data it handles and
+  <p>Memoir is a notebook app for Windows, Mac and iPhone. This policy explains what data it handles and
     what happens to it. In short: your notes are encrypted on your device, stored only on your
     device and in your own Google Drive, and never sent to us or anyone else.</p>
 
@@ -35,15 +35,16 @@
 
   <h2>What Memoir stores, and where</h2>
   <ul>
-    <li><strong>Your notes, folders and attachments</strong> are stored on your computer in an
+    <li><strong>Your notes, folders and attachments</strong> are stored on your device in an
       encrypted database, and — if you connect Google Drive — as encrypted files in a folder named
       <strong>Memoir</strong> in your own Google Drive.</li>
-    <li>They are encrypted on your computer with a key that only your passphrase (or recovery
+    <li>They are encrypted on your device with a key that only your passphrase (or recovery
       key) unlocks, before they are written to disk or uploaded. Google, the developer of
       Memoir and anyone else without your passphrase cannot read them.</li>
-    <li>On your computer, Windows Credential Manager holds the key to the local database (if you
-      chose "Remember on this device") and the sign-in token for Google Drive.</li>
-    <li>A log file on your computer records what the app did (for example, sync rounds and
+    <li>On each device, the system's secure storage — Windows Credential Manager, or the Keychain
+      on a Mac or iPhone — holds the key to the local database (if you chose "Remember on this
+      device") and the sign-in token for Google Drive.</li>
+    <li>A log file on your device records what the app did (for example, sync rounds and
       errors) to help with troubleshooting. It never contains the content of your notes, and it
       is not sent anywhere.</li>
   </ul>
@@ -57,9 +58,11 @@
       encrypted files there. It cannot see any other file in your Drive.</li>
     <li>Through the same permission it reads your Google account's email address, shown in
       Memoir's settings so you know which account is connected.</li>
+    <li>If you keep several notebooks (workspaces), each one connects to its own Google account
+      with this same permission.</li>
   </ul>
   <p>This data is used only to provide Memoir's syncing to you. It is transferred directly
-    between your computer and Google; Memoir has no servers. It is not shared with, sold to, or
+    between your device and Google; Memoir has no servers. It is not shared with, sold to, or
     transferred to anyone, it is not used for advertising, and it is not used to develop,
     improve or train artificial-intelligence or machine-learning models. No person reads it.</p>
   <p>Memoir's use and transfer of information received from Google APIs adheres to the
@@ -69,9 +72,16 @@
   <h2>What Memoir does not do</h2>
   <ul>
     <li>No accounts, no analytics, no tracking, no advertising.</li>
-    <li>No data is sent to the developer or to any third party. The only network service Memoir
-      talks to is Google (for sign-in and Drive), and only after you connect it.</li>
+    <li>Memoir sends no data to the developer or to any third party. The only network service it
+      talks to is Google (for sign-in and Drive), and only after you connect it. Memoir for Windows
+      and Mac also checks GitHub for new versions; that request carries nothing about you or your
+      notes (GitHub sees it like any web request, for example your IP address).</li>
   </ul>
+
+  <h2>Apple</h2>
+  <p>The iPhone app is installed through Apple's TestFlight (and later the App Store). What those
+    services collect is covered by Apple's privacy policy; feedback or crash reports you choose
+    to send through TestFlight reach the developer through Apple.</p>
 
   <h2>Your control</h2>
   <ul>
@@ -79,9 +89,13 @@
       account. You can also remove access at
       <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
     <li><strong>Delete:</strong> delete the Memoir folder in your Google Drive and uninstall the
-      app; uninstalling leaves your local data in <code>%LOCALAPPDATA%\com.memoir.notebook</code>,
-      which you can delete as well.</li>
-    <li><strong>Export:</strong> Settings → Export to Markdown saves all your notes as plain files.</li>
+      app. Uninstalling on Windows or a Mac leaves your local data in place, and you can delete it
+      as well: <code>%LOCALAPPDATA%\com.memoir.notebook</code> on Windows,
+      <code>~/Library/Application Support/com.memoir.notebook</code> (and the log in
+      <code>~/Library/Logs/com.memoir.notebook</code>) on a Mac. On iPhone, deleting the app
+      deletes its data.</li>
+    <li><strong>Export:</strong> Settings → Export to Markdown (on Windows and Mac) saves all your
+      notes as plain files.</li>
   </ul>
 
   <h2>Children</h2>
