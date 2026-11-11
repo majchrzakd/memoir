@@ -39,6 +39,11 @@ docs/ARCHITECTURE.md) in the same change. Keep entries short and say why.
 - Xcode and Tauri rewrite `app/src-tauri/gen/apple` when they open or
   regenerate the project; changes there that are only formatting can be
   discarded.
+- Claude can't see or click the Mac app's window: screenshots and Apple
+  events (`screencapture`, `osascript`) time out from here. Window, menu
+  and Dock behaviour is for the user to try; check UI changes in the
+  browser mock. For the same reason a local `.dmg` build needs `CI=true`
+  (it skips laying out the disk image window in Finder).
 - The Simulator holds a synced copy of the user's real notebook, and its
   passphrase is theirs to type: try UI changes in the browser mock at phone
   size instead.
