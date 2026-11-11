@@ -25,7 +25,8 @@ npm run verify         # everything CI runs: types, lint, tests, fmt, clippy
 
 Needs a Mac with Xcode (accept its license once: `sudo xcodebuild -license`),
 CocoaPods (`brew install cocoapods`) and the Rust iOS targets
-(`rustup target add aarch64-apple-ios aarch64-apple-ios-sim`). Then:
+(`rustup target add aarch64-apple-ios aarch64-apple-ios-sim`). CocoaPods
+needs a UTF-8 locale (`export LANG=en_US.UTF-8`). Then:
 
 ```sh
 cd app
