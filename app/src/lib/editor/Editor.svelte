@@ -401,6 +401,14 @@
     outline: none;
   }
 
+  /* app.css raises text fields to 16px on touch screens (so iOS doesn't zoom
+     in on focus) with !important; the title is bigger than that already. */
+  @media (pointer: coarse) {
+    .title {
+      font-size: 28px !important;
+    }
+  }
+
   .title::placeholder {
     color: var(--text-muted);
     opacity: 0.6;

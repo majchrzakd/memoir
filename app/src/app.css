@@ -61,7 +61,9 @@ body {
     font-size: 16px;
   }
 
-  /* Text fields set smaller sizes of their own (the note editors: 14–15px). */
+  /* Text fields set smaller sizes of their own (the note editors: 14–15px).
+     A field that's bigger than 16px keeps its size with an !important rule of
+     its own (the note title, in Editor.svelte). */
   input,
   textarea,
   [contenteditable='true'] {
