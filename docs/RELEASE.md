@@ -62,7 +62,8 @@ Signing is then configured in `bundle.windows` (`certificateThumbprint` or
 `signCommand`).
 
 ### macOS signing and notarization
-Until then the Mac app is signed *ad hoc*. It runs, but:
+Without the Apple secrets below, the Mac app is signed *ad hoc*. It runs,
+but:
 - the first time, macOS refuses to open an app downloaded from the internet
   that isn't notarized. Open it once with right-click → **Open** (or System
   Settings → Privacy & Security → **Open Anyway**); updates after that are
@@ -71,15 +72,50 @@ Until then the Mac app is signed *ad hoc*. It runs, but:
   key (choose **Always Allow**), because an ad-hoc signature changes with
   every build.
 
-To remove both: an **Apple Developer Program** membership ($99/year) gives a
-*Developer ID Application* certificate. Then add these repository secrets and
-the Release workflow signs and notarizes the Mac app:
-- `APPLE_CERTIFICATE`: the certificate exported from Keychain Access as
-  `.p12`, base64-encoded (`base64 -i cert.p12 | pbcopy`)
-- `APPLE_CERTIFICATE_PASSWORD`: the `.p12` export password
-- `APPLE_SIGNING_IDENTITY`: e.g. `Developer ID Application: Dominik Majchrzak (TEAMID)`
-- `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password from
-  account.apple.com) and `APPLE_TEAM_ID`, for notarization
+To remove both, the Release workflow signs the Mac app with a *Developer ID
+Application* certificate and has Apple notarize it. The Apple Developer
+Program membership (team `SXRB4AG285`, the same one TestFlight uses) covers
+it. Builds made on your Mac (`build-app.sh`) stay ad hoc.
+
+One-time setup:
+1. **Certificate** (only the team's Account Holder can create one): Xcode →
+   Settings → Accounts → the team → **Manage Certificates…** → **+** →
+   *Developer ID Application*. It lands in the login keychain; check with
+   `security find-identity -v -p codesigning`.
+2. **Export it:** Keychain Access → login → My Certificates → right-click
+   *Developer ID Application: …* → Export → `.p12`, with a new password.
+   Keep the `.p12` and its password in a password manager.
+3. **App-specific password** for notarization: account.apple.com → Sign-In
+   and Security → App-Specific Passwords.
+4. **Repository secrets**, from the project folder (each `gh secret set NAME`
+   asks for the value):
+   ```sh
+   base64 -i ~/Desktop/memoir-developer-id.p12 | gh secret set APPLE_CERTIFICATE
+   gh secret set APPLE_CERTIFICATE_PASSWORD   # the .p12 export password
+   gh secret set APPLE_SIGNING_IDENTITY       # "Developer ID Application: <name> (SXRB4AG285)"
+   gh secret set APPLE_ID                     # the Apple Account email
+   gh secret set APPLE_PASSWORD               # the app-specific password
+   gh secret set APPLE_TEAM_ID --body SXRB4AG285
+   ```
+   Then delete the `.p12` from the Desktop.
+
+The Release workflow's *Apple signing* step switches on when
+`APPLE_CERTIFICATE` is set and fails if any of the others is missing. The
+`APPLE_SIGNING_IDENTITY` it passes on replaces the ad-hoc `"-"` in
+`tauri.macos.conf.json`. Check the first signed run's macOS log for the
+notarization, and `spctl -a -vv /Applications/Memoir.app` on the installed
+app ("source=Notarized Developer ID").
+
+The first update from an ad-hoc build to a signed one asks the Keychain
+question once more (the signature changes one last time); after that it
+stays quiet. A Developer ID certificate is valid for 5 years; renew it and
+replace the first three secrets before it runs out.
+
+The Mac App Store was considered and left for later: it requires the App
+Sandbox (the notebook would move into the app's container, and export,
+import and the loopback Google sign-in need sandbox entitlements) and
+doesn't allow the self-updater, so it would be a second build. If it comes,
+add macOS to the iPhone app's App Store record (same bundle ID, one listing).
 
 ## Releases and auto-update (GitHub)
 

@@ -60,7 +60,13 @@ docs/ARCHITECTURE.md) in the same change. Keep entries short and say why.
   algorithms instead of, or in addition to, Apple's" (ChaCha20-Poly1305,
   Argon2, HKDF, rustls are built into the app), and not available in France,
   which would need a French encryption declaration first.
-- **App Store, when it comes:** first version iPhone-only (no iPad
-  screenshots or iPad review), France left out (see above). EU trader status
-  and a public vs unlisted listing are the user's call. Finishing the iOS
-  share sheet export and attachments first lowers the risk of rejection.
+- **App Store, when it comes:** France left out (see above). iPhone-only or
+  iPhone and iPad is open: the layout works at iPad sizes in the browser mock
+  (checked 2026-11-11), and iPad support can be added in a later version but
+  not removed once shipped. EU trader status and a public vs unlisted listing
+  are the user's call. Finishing the iOS share sheet export and attachments
+  first lowers the risk of rejection.
+- **Mac distribution (2026-11-11):** GitHub releases with the self-updater,
+  signed with Developer ID and notarized (setup: docs/RELEASE.md). Not the
+  Mac App Store for now: it needs the App Sandbox and no self-updater, so a
+  second build.
